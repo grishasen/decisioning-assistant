@@ -151,7 +151,7 @@ Advanced examples:
 
 ```bash
 # Run from outside project root
-decisioning-assistant --project-root /Users/seng1/Documents/DecisioningAssistant ingest
+decisioning-assistant --project-root /Users/vasya/Documents/DecisioningAssistant ingest
 
 # Skip Webex ingestion but still normalize
 decisioning-assistant ingest --skip-webex
