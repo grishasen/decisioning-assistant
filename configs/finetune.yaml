@@ -1,0 +1,52 @@
+model: mlx-community/gemma-3-4b-it-bf16
+data_dir: data/qa/mlx
+adapter_path: data/models/gemma-3-4b-it-bf16-lora
+train: true
+
+# The PRNG seed
+seed: 15
+
+# Number of layers to fine-tune
+num_layers: 34
+
+# Minibatch size.
+batch_size: 4
+
+# Iterations to train for.
+iters: 1000
+
+# Adam learning rate.
+learning_rate: 5e-5
+
+# Save the model every N iterations.
+save_every: 100
+steps_per_report: 25
+steps_per_eval: 100
+
+# Maximum sequence length.
+max_seq_length: 1024
+
+# Use gradient checkpointing to reduce memory use.
+grad_checkpoint: true
+
+# LoRA parameters can only be specified in a config file
+## these are important parameters to tune
+lora_parameters:
+  # The layer keys to apply LoRA to.
+  # These will be applied for the last lora_layers
+  #keys: ["q_proj", "k_proj", "v_proj", "o_proj"]
+  rank: 128
+  alpha: 256.0
+  scale: 2.0
+  dropout: 0.05
+
+# Schedule can only be specified in a config file, uncomment to use.
+#lr_schedule:
+# name: cosine_decay
+# warmup: 100 # 0 for no warmup
+# warmup_init: 1e-6 # 0 if not specified
+# arguments: [5e-5, 2000, 5e-7] # passed to scheduler
+
+
+# Optional if you later want to fuse LoRA into a standalone model.
+# fused_model_path: data/models/gemma_lora_fused

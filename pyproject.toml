@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "DecisioningAssistant"
+version = "0.1.0"
+description = "Local pipelines for PDF/Webex ingestion, synthetic QA generation, Gemma fine-tuning (MLX), and local RAG."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "pydantic>=2.7",
+  "pyyaml>=6.0",
+  "numpy>=1.26",
+  "tqdm>=4.66",
+  "pymupdf>=1.24",
+  "qdrant-client>=1.9",
+  "sentence-transformers>=2.7",
+  "mlx-lm>=0.18",
+  "python-dotenv>=1.0",
+  "streamlit>=1.39",
+]
+
+
+[project.scripts]
+decisioning-assistant = "decisioning_assistant.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+]
+pdf_markdown = [
+  "pymupdf4llm>=0.0.16",
+]
+webex = [
+  "webexspacearchive",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+addopts = "-q"

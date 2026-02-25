@@ -1,0 +1,15 @@
+input_chunks: data/staging/chunks/chunks.jsonl
+output_raw_qa: data/qa/qa_raw.jsonl
+output_clean_qa: data/qa/qa_clean.jsonl
+output_split_dir: data/qa
+
+qa_per_chunk: 1
+max_chunks: 0  # 0 means all chunks
+min_question_chars: 12
+min_answer_chars: 24
+max_answer_chars: 1800
+
+train_ratio: 0.9
+valid_ratio: 0.08
+test_ratio: 0.02
+seed: 42

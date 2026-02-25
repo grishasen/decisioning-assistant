@@ -1,0 +1,19 @@
+pdf:
+  input_dir: data/raw/pdf
+  output_jsonl: data/staging/documents/pdf_documents.jsonl
+  extract_mode: markdown_if_available
+
+webex:
+  raw_dir: data/raw/webex
+  output_jsonl: data/staging/documents/webex_documents.jsonl
+  include_threads: true
+
+normalize:
+  inputs:
+    - data/staging/documents/pdf_documents.jsonl
+    - data/staging/documents/webex_documents.jsonl
+  output_documents: data/staging/documents/documents.jsonl
+  output_chunks: data/staging/chunks/chunks.jsonl
+  chunk_size: 900
+  chunk_overlap: 150
+  min_chunk_chars: 180

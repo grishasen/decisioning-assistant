@@ -1,0 +1,58 @@
+# RAG retrieval and prompt budget config.
+#
+# NOTE: The preset values below were created for Apple MacBook Pro M3
+# with 24GB unified memory (local MLX + local Qdrant workflow).
+# Example starting presets by model size (tune on your data/workload):
+# 2B:
+#   top_k: 6
+#   max_context_chunks: 4
+#   max_history_turns: 6
+#   max_history_chars: 3200
+#   max_chunk_chars: 1200
+#   max_total_context_chars: 4800
+#   max_prompt_chars: 10000
+#   index_batch_size: 128
+# 4B:
+#   top_k: 5
+#   max_context_chunks: 4
+#   max_history_turns: 4
+#   max_history_chars: 2400
+#   max_chunk_chars: 900
+#   max_total_context_chars: 3600
+#   max_prompt_chars: 7500
+#   index_batch_size: 96
+# 7B:
+#   top_k: 4
+#   max_context_chunks: 3
+#   max_history_turns: 3
+#   max_history_chars: 1800
+#   max_chunk_chars: 700
+#   max_total_context_chars: 2200
+#   max_prompt_chars: 5000
+#   index_batch_size: 64
+
+chunks_path: data/staging/chunks/chunks.jsonl
+qdrant_path: data/rag/vectordb
+collection_name: docs
+embedding_model: BAAI/bge-base-en-v1.5
+normalize_embeddings: true
+
+# Retrieval defaults + UI bounds.
+# Active defaults below are tuned for MacBook Pro M3 24GB with 4B models.
+top_k: 5
+top_k_min: 1
+top_k_max: 20
+
+max_context_chunks: 4
+max_context_chunks_min: 1
+max_context_chunks_max: 12
+
+# Prompt/context budget controls.
+max_history_turns: 4
+max_history_chars: 2400
+max_chunk_chars: 900
+max_total_context_chars: 3600
+max_prompt_chars: 7500
+
+# Embedding/indexing throughput-memory tradeoff.
+index_batch_size: 96

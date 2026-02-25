@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.pytest_cache/
+.ruff_cache/
+
+data/raw/
+data/staging/
+data/qa/
+data/rag/
+data/models/
