@@ -6,8 +6,18 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-data/raw/
-data/staging/
-data/qa/
-data/rag/
-data/models/
+# Ignore data files by default
+/data/**
+
+# Keep directory structure and local ignore files
+!/data/
+!/data/**/
+!/data/.gitignore
+!/data/**/.gitignore
+
+# Keep curated filter definitions
+!/data/filters/
+!/data/filters/**
+
+/src/DecisioningAssistant.egg-info/
+/src/DecisioningAssistant.egg-info/**

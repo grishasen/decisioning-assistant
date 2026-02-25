@@ -1,35 +1,35 @@
 # Generation defaults.
 #
-# NOTE: The preset values below were created for Apple MacBook Pro M3
-# with 24GB unified memory (local MLX inference/fine-tuning).
+# Baseline values below are tuned for Apple MacBook Pro M3 24GB.
+# They are not hard limits: increase tokens/temperature/model size on larger hardware.
+#
 # Suggested starting values by model size:
 # 2B:
-#   qa_generator.max_tokens: 256
-#   answer_model.max_tokens: 320
-#   temperature: 0.20
+#   qa_generator.max_tokens: 320
+#   answer_model.max_tokens: 600
 # 4B:
-#   qa_generator.max_tokens: 224
-#   answer_model.max_tokens: 256
-#   temperature: 0.20
+#   qa_generator.max_tokens: 384
+#   answer_model.max_tokens: 900
 # 7B:
-#   qa_generator.max_tokens: 160
-#   answer_model.max_tokens: 192
-#   temperature: 0.15
+#   qa_generator.max_tokens: 512
+#   answer_model.max_tokens: 1200
 
 qa_generator:
   provider: mlx
-  model: mlx-community/gemma-2-2b-it
-  # Active default tuned for MacBook Pro M3 24GB when using 4B models.
-  max_tokens: 256
-  temperature: 0.2
+  model: mlx-community/gemma-3-4b-it-bf16
+  # M3 24GB baseline; raise for larger-memory systems or smaller quantized models.
+  max_tokens: 384
+  temperature: 0.15
+  trust_remote_code: true
 
 answer_model:
   provider: mlx
   model: mlx-community/gemma-3-4b-it-bf16
-  adapter_path: data/models/gemma-3-4b-it-bf16-lora
-  # Active default tuned for MacBook Pro M3 24GB when using 4B models.
-  max_tokens: 320
-  temperature: 0.2
+  #adapter_path: data/models/gemma-3-4b-it-bf16-lora
+  # M3 24GB baseline; can be increased on larger-memory systems.
+  max_tokens: 900
+  temperature: 0.15
+  trust_remote_code: true
 
 embeddings:
   model_name: BAAI/bge-base-en-v1.5

@@ -29,6 +29,32 @@ def _load_docs(paths: list[str]) -> list[DocumentRecord]:
     return docs
 
 
+def _make_chunk(doc: DocumentRecord, idx: int, chunk_text: str) -> ChunkRecord:
+    chunk_id = stable_id(doc.doc_id, str(idx), chunk_text[:120])
+    return ChunkRecord(
+        chunk_id=chunk_id,
+        doc_id=doc.doc_id,
+        source_type=doc.source_type,
+        source_ref=doc.source_ref,
+        text=chunk_text,
+        metadata={
+            "chunk_index": idx,
+            "title": doc.title,
+            "page": doc.page,
+            "created_at": doc.created_at.isoformat() if doc.created_at else None,
+            **doc.metadata,
+        },
+    )
+
+
+def _is_single_thread_chunk(doc: DocumentRecord) -> bool:
+    if doc.source_type != "webex":
+        return False
+    if bool(doc.metadata.get("is_thread_document")):
+        return True
+    return str(doc.metadata.get("webex_grouping", "")).lower() == "thread"
+
+
 def _chunk_docs(
     docs: list[DocumentRecord],
     chunk_size: int,
@@ -42,25 +68,14 @@ def _chunk_docs(
         if not text:
             continue
 
+        if _is_single_thread_chunk(doc):
+            chunks.append(_make_chunk(doc, 0, text))
+            continue
+
         for idx, chunk_text in enumerate(split_text(text, chunk_size, chunk_overlap)):
             if len(chunk_text) < min_chunk_chars:
                 continue
-            chunk_id = stable_id(doc.doc_id, str(idx), chunk_text[:120])
-            chunk = ChunkRecord(
-                chunk_id=chunk_id,
-                doc_id=doc.doc_id,
-                source_type=doc.source_type,
-                source_ref=doc.source_ref,
-                text=chunk_text,
-                metadata={
-                    "chunk_index": idx,
-                    "title": doc.title,
-                    "page": doc.page,
-                    "created_at": doc.created_at.isoformat() if doc.created_at else None,
-                    **doc.metadata,
-                },
-            )
-            chunks.append(chunk)
+            chunks.append(_make_chunk(doc, idx, chunk_text))
     return chunks
 
 

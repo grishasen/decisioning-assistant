@@ -3,12 +3,13 @@ from __future__ import annotations
 import argparse
 import re
 from statistics import mean
+from typing import Any
 
 from tqdm import tqdm
 
 from common.io_utils import iter_jsonl, read_yaml
 from common.logging_utils import get_logger
-from common.mlx_utils import run_mlx_generate
+from common.mlx_utils import MLXLoadedGenerator
 from common.text_utils import normalize_whitespace
 
 logger = get_logger(__name__)
@@ -55,11 +56,14 @@ def token_f1(pred: str, gold: str) -> float:
 def main() -> None:
     args = parse_args()
     models_cfg = read_yaml(args.models_config)
-    answer_cfg = models_cfg.get("answer_model", {})
+    answer_cfg: dict[str, Any] = models_cfg.get("answer_model", {})
 
     model = str(answer_cfg.get("model", "mlx-community/gemma-2-2b-it-4bit"))
     max_tokens = int(answer_cfg.get("max_tokens", 400))
     temperature = float(answer_cfg.get("temperature", 0.2))
+    trust_remote_code = bool(answer_cfg.get("trust_remote_code", True))
+
+    adapter_path = args.adapter_path.strip() or answer_cfg.get("adapter_path") or None
 
     rows = list(iter_jsonl(args.test_path))
     if args.limit > 0:
@@ -67,6 +71,12 @@ def main() -> None:
     if not rows:
         logger.warning("No rows found at %s", args.test_path)
         return
+
+    generator = MLXLoadedGenerator(
+        model=model,
+        adapter_path=str(adapter_path) if adapter_path else None,
+        trust_remote_code=trust_remote_code,
+    )
 
     scores: list[float] = []
     for item in tqdm(rows, desc="Evaluating"):
@@ -77,12 +87,10 @@ def main() -> None:
 
         prompt = f"Question: {question}\nAnswer in concise technical style."
         try:
-            prediction = run_mlx_generate(
-                model=model,
+            prediction = generator.generate(
                 prompt=prompt,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                adapter_path=args.adapter_path or None,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Generation failed for question: %s (%s)", question, exc)

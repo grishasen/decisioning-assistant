@@ -29,6 +29,22 @@ def _load_sources_cfg(path: str, project_root: Path) -> dict:
     return read_yaml(cfg_path)
 
 
+def _pick_metadata_value(override: str, cfg: dict, key: str) -> str:
+    if isinstance(override, str) and override.strip():
+        return override.strip()
+
+    raw = cfg.get(key)
+    if isinstance(raw, str):
+        return raw.strip()
+    return ""
+
+
+def _append_if_value(cmd: list[str], flag: str, value: str) -> None:
+    cleaned = value.strip()
+    if cleaned:
+        cmd.extend([flag, cleaned])
+
+
 def cmd_ingest(args: argparse.Namespace) -> None:
     project_root = Path(args.project_root).resolve()
     cfg = _load_sources_cfg(args.sources_config, project_root)
@@ -45,33 +61,46 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         webex_cfg.get("output_jsonl", "data/staging/documents/webex_documents.jsonl")
     )
 
+    pdf_product = _pick_metadata_value(args.pdf_product, pdf_cfg, "product")
+    pdf_doc_version = _pick_metadata_value(args.pdf_doc_version, pdf_cfg, "doc_version")
+    pdf_doc_type = _pick_metadata_value(args.pdf_doc_type, pdf_cfg, "doc_type")
+
+    webex_product = _pick_metadata_value(args.webex_product, webex_cfg, "product")
+    webex_doc_version = _pick_metadata_value(args.webex_doc_version, webex_cfg, "doc_version")
+    webex_doc_type = _pick_metadata_value(args.webex_doc_type, webex_cfg, "doc_type")
+    webex_group_by_thread = bool(webex_cfg.get("include_threads", True))
+
     if not args.skip_pdf:
-        _run(
-            [
-                sys.executable,
-                "-m",
-                "ingestion.ingest_pdfs",
-                "--input-dir",
-                _resolve_path(pdf_input, project_root),
-                "--output",
-                _resolve_path(pdf_output, project_root),
-            ],
-            project_root,
-        )
+        pdf_cmd = [
+            sys.executable,
+            "-m",
+            "ingestion.ingest_pdfs",
+            "--input-dir",
+            _resolve_path(pdf_input, project_root),
+            "--output",
+            _resolve_path(pdf_output, project_root),
+        ]
+        _append_if_value(pdf_cmd, "--product", pdf_product)
+        _append_if_value(pdf_cmd, "--doc-version", pdf_doc_version)
+        _append_if_value(pdf_cmd, "--doc-type", pdf_doc_type)
+        _run(pdf_cmd, project_root)
 
     if not args.skip_webex:
-        _run(
-            [
-                sys.executable,
-                "-m",
-                "ingestion.ingest_webex",
-                "--input-dir",
-                _resolve_path(webex_input, project_root),
-                "--output",
-                _resolve_path(webex_output, project_root),
-            ],
-            project_root,
-        )
+        webex_cmd = [
+            sys.executable,
+            "-m",
+            "ingestion.ingest_webex",
+            "--input-dir",
+            _resolve_path(webex_input, project_root),
+            "--output",
+            _resolve_path(webex_output, project_root),
+        ]
+        if not webex_group_by_thread:
+            webex_cmd.append("--no-group-by-thread")
+        _append_if_value(webex_cmd, "--product", webex_product)
+        _append_if_value(webex_cmd, "--doc-version", webex_doc_version)
+        _append_if_value(webex_cmd, "--doc-type", webex_doc_type)
+        _run(webex_cmd, project_root)
 
     if not args.skip_normalize:
         _run(
@@ -160,6 +189,44 @@ def cmd_rag_index(args: argparse.Namespace) -> None:
     _run(cmd, project_root)
 
 
+def cmd_rag_export(args: argparse.Namespace) -> None:
+    project_root = Path(args.project_root).resolve()
+    cmd = [
+        sys.executable,
+        "-m",
+        "rag.export_index",
+        "--config",
+        _resolve_path(args.rag_config, project_root),
+        "--output-dir",
+        _resolve_path(args.output_dir, project_root),
+    ]
+    if args.batch_size > 0:
+        cmd.extend(["--batch-size", str(args.batch_size)])
+    _run(cmd, project_root)
+
+
+def cmd_rag_import(args: argparse.Namespace) -> None:
+    project_root = Path(args.project_root).resolve()
+    cmd = [
+        sys.executable,
+        "-m",
+        "rag.import_index",
+        "--input-dir",
+        _resolve_path(args.input_dir, project_root),
+        "--config",
+        _resolve_path(args.rag_config, project_root),
+    ]
+    if args.qdrant_path:
+        cmd.extend(["--qdrant-path", _resolve_path(args.qdrant_path, project_root)])
+    if args.collection_name:
+        cmd.extend(["--collection-name", args.collection_name])
+    if args.batch_size > 0:
+        cmd.extend(["--batch-size", str(args.batch_size)])
+    if args.recreate:
+        cmd.append("--recreate")
+    _run(cmd, project_root)
+
+
 def cmd_app(args: argparse.Namespace) -> None:
     project_root = Path(args.project_root).resolve()
 
@@ -206,8 +273,14 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_parser.add_argument("--sources-config", default="configs/sources.yaml")
     ingest_parser.add_argument("--pdf-input-dir", default="")
     ingest_parser.add_argument("--pdf-output", default="")
+    ingest_parser.add_argument("--pdf-product", default="")
+    ingest_parser.add_argument("--pdf-doc-version", default="")
+    ingest_parser.add_argument("--pdf-doc-type", default="")
     ingest_parser.add_argument("--webex-input-dir", default="")
     ingest_parser.add_argument("--webex-output", default="")
+    ingest_parser.add_argument("--webex-product", default="")
+    ingest_parser.add_argument("--webex-doc-version", default="")
+    ingest_parser.add_argument("--webex-doc-type", default="")
     ingest_parser.add_argument("--skip-pdf", action="store_true")
     ingest_parser.add_argument("--skip-webex", action="store_true")
     ingest_parser.add_argument("--skip-normalize", action="store_true")
@@ -235,7 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
     rag_index_parser = subparsers.add_parser(
         "rag-index",
         help=(
-            "Build RAG vector index. By default, upserts into existing collection; "
+            "Build hybrid RAG vector index (document chunks + QA pairs). By default, upserts into existing collection; "
             "use --recreate to rebuild from scratch."
         ),
     )
@@ -252,6 +325,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Drop and recreate collection before indexing.",
     )
     rag_index_parser.set_defaults(func=cmd_rag_index)
+
+    rag_export_parser = subparsers.add_parser(
+        "rag-export",
+        help="Export local RAG collection into a portable bundle for transfer.",
+    )
+    rag_export_parser.add_argument("--rag-config", default="configs/rag.yaml")
+    rag_export_parser.add_argument("--output-dir", default="data/rag/export")
+    rag_export_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=512,
+        help="Override export batch size.",
+    )
+    rag_export_parser.set_defaults(func=cmd_rag_export)
+
+    rag_import_parser = subparsers.add_parser(
+        "rag-import",
+        help="Import a portable RAG bundle into local Qdrant.",
+    )
+    rag_import_parser.add_argument("--rag-config", default="configs/rag.yaml")
+    rag_import_parser.add_argument("--input-dir", default="data/rag/export")
+    rag_import_parser.add_argument(
+        "--qdrant-path",
+        default="",
+        help="Override destination Qdrant path.",
+    )
+    rag_import_parser.add_argument(
+        "--collection-name",
+        default="",
+        help="Override destination collection name.",
+    )
+    rag_import_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=256,
+        help="Override import batch size.",
+    )
+    rag_import_parser.add_argument(
+        "--recreate",
+        action="store_true",
+        help="Drop and recreate destination collection before import.",
+    )
+    rag_import_parser.set_defaults(func=cmd_rag_import)
 
     app_parser = subparsers.add_parser(
         "app",

@@ -16,7 +16,9 @@ logger = get_logger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate synthetic QA from chunked documents.")
+    parser = argparse.ArgumentParser(
+        description="Generate synthetic QA from chunked documents."
+    )
     parser.add_argument("--qa-config", default="configs/qa_generation.yaml")
     parser.add_argument("--models-config", default="configs/models.yaml")
     return parser.parse_args()

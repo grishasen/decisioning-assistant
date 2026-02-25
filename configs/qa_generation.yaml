@@ -3,11 +3,12 @@ output_raw_qa: data/qa/qa_raw.jsonl
 output_clean_qa: data/qa/qa_clean.jsonl
 output_split_dir: data/qa
 
-qa_per_chunk: 1
+# Generate denser supervision per context chunk.
+qa_per_chunk: 3
 max_chunks: 0  # 0 means all chunks
-min_question_chars: 12
-min_answer_chars: 24
-max_answer_chars: 1800
+min_question_chars: 20
+min_answer_chars: 120
+max_answer_chars: 1200
 
 train_ratio: 0.9
 valid_ratio: 0.08

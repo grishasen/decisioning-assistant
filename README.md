@@ -5,8 +5,8 @@ This project builds a local pipeline to:
 2. Convert source text into chunked documents.
 3. Generate English QA pairs locally with Gemma on MLX.
 4. Fine-tune Gemma with LoRA/QLoRA via `mlx_lm`.
-5. Build a local open-source RAG index (Qdrant).
-6. Answer questions with retrieval-augmented local generation.
+5. Build a hybrid local open-source RAG index from chunks + QA pairs (Qdrant).
+6. Answer questions with retrieval-augmented local generation. Chat in Streamlit application.
 
 ## Why This Stack
 - **Model family**: Gemma (default: `mlx-community/gemma-2-2b-it-4bit`) for practical local training/inference on 24GB unified memory.
@@ -36,7 +36,7 @@ src/
   ingestion/          # PDF/Webex ingestion + normalization
   qa/                 # QA generation, validation, split
   training/           # MLX LoRA run + quick eval + adapter fuse
-  rag/                # index build, retrieve, local RAG chat
+  rag/                # index build/retrieve/chat + export/import tools
   common/             # schemas, IO, prompts, MLX wrapper
 
 pipelines/
@@ -45,6 +45,8 @@ pipelines/
   03_finetune.sh
   04_build_rag.sh
   05_eval.sh
+  06_export_rag.sh
+  07_import_rag.sh
 ```
 
 ## Setup
@@ -137,13 +139,19 @@ decisioning-assistant qa
 # 3) Fine-tune model via MLX LoRA
 decisioning-assistant finetune --finetune-config configs/finetune.yaml
 
-# 4) Build or update local RAG index (upserts if collection exists)
+# 4) Build or update local hybrid RAG index (chunks + QA pairs, upserts if collection exists)
 decisioning-assistant rag-index
 
 # 5) Recreate collection and rebuild from scratch
 decisioning-assistant rag-index --recreate
 
-# 6) Start Streamlit RAG assistant UI
+# 6) Export local RAG collection (portable bundle)
+decisioning-assistant rag-export --output-dir data/rag/export
+
+# 7) Import RAG bundle (on another machine)
+decisioning-assistant rag-import --input-dir data/rag/export --recreate
+
+# 8) Start Streamlit RAG assistant UI
 decisioning-assistant app --server-port 8501
 ```
 
@@ -151,11 +159,36 @@ Advanced examples:
 
 ```bash
 # Run from outside project root
-decisioning-assistant --project-root /Users/seng1/Documents/DecisioningAssistant ingest
+decisioning-assistant --project-root /Users/vasya/Documents/DecisioningAssistant ingest
 
 # Skip Webex ingestion but still normalize
 decisioning-assistant ingest --skip-webex
 
 # Run only QA split stage
 decisioning-assistant qa --skip-generate --skip-validate
+```
+
+## Hybrid RAG Index Inputs
+- By default, `decisioning-assistant rag-index` indexes both source chunks and cleaned QA pairs.
+- Configure this in `configs/rag.yaml` using:
+  - `include_qa`
+  - `qa_path`
+  - `qa_text_mode` (`question_answer`, `question_only`, `answer_only`)
+  - `max_qa_answer_chars`
+- Set `include_qa: false` if you want chunk-only indexing.
+
+## RAG Export/Import Transfer
+- Export creates a portable bundle with:
+  - `metadata.json` (collection + vector config)
+  - `points.jsonl` (id, vector, payload)
+- Default export path: `data/rag/export`
+- Typical transfer flow:
+
+```bash
+# Machine A
+decisioning-assistant rag-export --output-dir data/rag/export
+
+# Copy data/rag/export to Machine B, then:
+# Machine B
+decisioning-assistant rag-import --input-dir data/rag/export --recreate
 ```

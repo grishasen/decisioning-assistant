@@ -2,11 +2,19 @@ pdf:
   input_dir: data/raw/pdf
   output_jsonl: data/staging/documents/pdf_documents.jsonl
   extract_mode: markdown_if_available
+  # Canonical metadata defaults
+  product: ""
+  doc_version: ""
+  doc_type: guide
 
 webex:
   raw_dir: data/raw/webex
   output_jsonl: data/staging/documents/webex_documents.jsonl
   include_threads: true
+  # Canonical metadata defaults
+  product: ""
+  doc_version: ""
+  doc_type: ""
 
 normalize:
   inputs:
@@ -14,6 +22,7 @@ normalize:
     - data/staging/documents/webex_documents.jsonl
   output_documents: data/staging/documents/documents.jsonl
   output_chunks: data/staging/chunks/chunks.jsonl
-  chunk_size: 900
-  chunk_overlap: 150
-  min_chunk_chars: 180
+  # Balanced defaults for M3 24GB; increase on larger hardware/model context windows.
+  chunk_size: 1100
+  chunk_overlap: 180
+  min_chunk_chars: 160
