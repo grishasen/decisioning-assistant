@@ -55,6 +55,12 @@ def _extract_qa_pairs(model_output: str) -> list[dict[str, str]]:
     return cleaned
 
 
+def _is_webex_chunk(chunk: ChunkRecord) -> bool:
+    if chunk.source_type.strip().lower() == "webex":
+        return True
+    return chunk.source_ref.strip().lower().startswith("webex::")
+
+
 def main() -> None:
     args = parse_args()
     qa_cfg = read_yaml(args.qa_config)
@@ -68,6 +74,9 @@ def main() -> None:
     min_question_chars = int(qa_cfg.get("min_question_chars", 12))
     min_answer_chars = int(qa_cfg.get("min_answer_chars", 24))
     max_answer_chars = int(qa_cfg.get("max_answer_chars", 1800))
+    min_webex_chunk_chars = int(qa_cfg.get("min_webex_chunk_chars", 200))
+    if min_webex_chunk_chars < 0:
+        raise ValueError("min_webex_chunk_chars must be >= 0")
 
     qa_model_cfg: dict[str, Any] = model_cfg.get("qa_generator", {})
     model_name = str(qa_model_cfg.get("model", "mlx-community/gemma-2-2b-it-4bit"))
@@ -90,8 +99,20 @@ def main() -> None:
     )
 
     rows: list[dict[str, Any]] = []
+    skipped_short_webex_chunks = 0
     for chunk in tqdm(chunks, desc="Generating QA"):
-        prompt = qa_generation_prompt(chunk.text, qa_per_chunk)
+        chunk_text = chunk.text.strip()
+        if _is_webex_chunk(chunk) and len(chunk_text) < min_webex_chunk_chars:
+            skipped_short_webex_chunks += 1
+            logger.debug(
+                "Skipping webex chunk %s because %s chars < min_webex_chunk_chars=%s",
+                chunk.chunk_id,
+                len(chunk_text),
+                min_webex_chunk_chars,
+            )
+            continue
+
+        prompt = qa_generation_prompt(chunk_text, qa_per_chunk)
         try:
             model_output = generator.generate(
                 prompt=prompt,
@@ -125,11 +146,18 @@ def main() -> None:
                 source_ref=chunk.source_ref,
                 source_type=chunk.source_type,
                 metadata={
-                    "chunk_text": chunk.text,
+                    "chunk_text": chunk_text,
                     "chunk_metadata": chunk.metadata,
                 },
             ).model_dump(mode="json")
             rows.append(row)
+
+    if skipped_short_webex_chunks > 0:
+        logger.info(
+            "Skipped %s webex chunks shorter than %s characters.",
+            skipped_short_webex_chunks,
+            min_webex_chunk_chars,
+        )
 
     count = write_jsonl(output_raw_qa, rows)
     logger.info("Wrote %s raw QA rows to %s", count, output_raw_qa)

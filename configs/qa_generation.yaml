@@ -4,11 +4,13 @@ output_clean_qa: data/qa/qa_clean.jsonl
 output_split_dir: data/qa
 
 # Generate denser supervision per context chunk.
-qa_per_chunk: 3
+qa_per_chunk: 1
 max_chunks: 0  # 0 means all chunks
 min_question_chars: 20
 min_answer_chars: 120
 max_answer_chars: 1200
+# Safety guard: skip QA generation for short Webex chunks.
+min_webex_chunk_chars: 200
 
 train_ratio: 0.9
 valid_ratio: 0.08

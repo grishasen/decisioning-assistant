@@ -173,6 +173,7 @@ def _build_thread_records(
     )
 
     records: list[DocumentRecord] = []
+    skipped_single_message_threads = 0
     for root in ordered_roots:
         room_id = str(root.get("room_id") or "unknown-room")
         thread_id = str(root.get("message_id") or "")
@@ -181,6 +182,9 @@ def _build_thread_records(
 
         replies = _sorted_thread_messages(replies_by_root.get((room_id, thread_id), []))
         ordered = [root, *replies]
+        if len(ordered) < 2:
+            skipped_single_message_threads += 1
+            continue
 
         room_title = room_title_from_file
         file_name = room_title_from_file
@@ -263,6 +267,12 @@ def _build_thread_records(
             metadata=metadata,
         )
         records.append(record)
+
+    if skipped_single_message_threads > 0:
+        logger.info(
+            "Skipped %s Webex threads with fewer than 2 messages.",
+            skipped_single_message_threads,
+        )
 
     return records
 
