@@ -202,6 +202,8 @@ def cmd_rag_export(args: argparse.Namespace) -> None:
     ]
     if args.batch_size > 0:
         cmd.extend(["--batch-size", str(args.batch_size)])
+    for source in args.source:
+        cmd.extend(["--source", source])
     _run(cmd, project_root)
 
 
@@ -337,6 +339,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=512,
         help="Override export batch size.",
+    )
+    rag_export_parser.add_argument(
+        "--source",
+        action="append",
+        choices=["pdf", "webex"],
+        default=[],
+        help="Export only selected source type(s). Repeat for multiple values.",
     )
     rag_export_parser.set_defaults(func=cmd_rag_export)
 

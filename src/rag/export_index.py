@@ -31,6 +31,14 @@ def parse_args() -> argparse.Namespace:
         default=512,
         help="Number of points to read per scroll batch.",
     )
+    parser.add_argument(
+        "--source",
+        dest="sources",
+        action="append",
+        choices=("pdf", "webex"),
+        default=[],
+        help="Optional source-type filter. Repeat for multiple values (e.g. --source pdf --source webex).",
+    )
     return parser.parse_args()
 
 
@@ -67,6 +75,27 @@ def _json_safe_id(value: Any) -> Any:
     return str(value)
 
 
+def _normalize_sources(sources: list[str]) -> set[str]:
+    return {value.strip().lower() for value in sources if value.strip()}
+
+
+def _payload_source_type(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+
+    source_type = payload.get("source_type")
+    if isinstance(source_type, str) and source_type.strip():
+        return source_type.strip().lower()
+
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        meta_source = metadata.get("source_type")
+        if isinstance(meta_source, str) and meta_source.strip():
+            return meta_source.strip().lower()
+
+    return ""
+
+
 def main() -> None:
     args = parse_args()
     cfg = read_yaml(args.config)
@@ -76,6 +105,8 @@ def main() -> None:
     batch_size = int(args.batch_size)
     if batch_size <= 0:
         raise ValueError("batch size must be > 0")
+
+    selected_sources = _normalize_sources(args.sources)
 
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -93,6 +124,8 @@ def main() -> None:
     vectors_config = _serialize_vectors_config(collection_info.config.params.vectors)
 
     exported_points = 0
+    scanned_points = 0
+    filtered_out_points = 0
     offset: Any = None
 
     with points_path.open("w", encoding="utf-8") as handle:
@@ -108,10 +141,18 @@ def main() -> None:
                 break
 
             for point in points:
+                scanned_points += 1
+                payload = point.payload or {}
+                if selected_sources:
+                    source_type = _payload_source_type(payload)
+                    if source_type not in selected_sources:
+                        filtered_out_points += 1
+                        continue
+
                 row = {
                     "id": _json_safe_id(point.id),
                     "vector": point.vector,
-                    "payload": point.payload or {},
+                    "payload": payload,
                 }
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
                 exported_points += 1
@@ -125,16 +166,23 @@ def main() -> None:
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "collection_name": collection_name,
         "vectors_config": vectors_config,
+        "source_filter": sorted(selected_sources),
         "points_file": points_path.name,
         "points_count": exported_points,
+        "scanned_points": scanned_points,
+        "filtered_out_points": filtered_out_points,
     }
     write_json(metadata_path, metadata)
 
+    filter_text = ",".join(sorted(selected_sources)) if selected_sources else "all"
     logger.info(
-        "Exported %s points from collection '%s' into %s",
+        "Exported %s points from collection '%s' into %s (scanned=%s, filtered_out=%s, source_filter=%s)",
         exported_points,
         collection_name,
         output_dir,
+        scanned_points,
+        filtered_out_points,
+        filter_text,
     )
 
 
