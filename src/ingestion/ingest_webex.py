@@ -95,6 +95,16 @@ def _room_title_from_path(path: Path) -> str:
     return stem or "Webex Space"
 
 
+def _build_thread_message_line(item: dict[str, Any]) -> str:
+    created = item.get("created")
+    author = str(item.get("author") or "unknown-user")
+    ts = created.isoformat() if isinstance(created, datetime) else "unknown-time"
+    message_text = str(item.get("text") or "").strip()
+    if not message_text:
+        return ""
+    return f"[{ts}] {author}: {message_text}"
+
+
 def _sorted_thread_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         messages,
@@ -194,14 +204,15 @@ def _build_thread_records(
         authors: set[str] = set()
         files: list[str] = []
 
+        thread_start_line = _build_thread_message_line(root)
         for item in ordered:
+            line = _build_thread_message_line(item)
+            if line:
+                lines.append(line)
+
             created = item.get("created")
             author = str(item.get("author") or "unknown-user")
             ts = created.isoformat() if isinstance(created, datetime) else "unknown-time"
-            message_text = str(item.get("text") or "").strip()
-            if message_text:
-                lines.append(f"[{ts}] {author}: {message_text}")
-
             markdown = item.get("markdown")
             if isinstance(markdown, str) and markdown.strip():
                 markdown_lines.append(f"[{ts}] {author}: {markdown.strip()}")
@@ -252,6 +263,10 @@ def _build_thread_records(
                 "files": files,
                 "is_thread_document": True,
                 "webex_grouping": "thread",
+                "thread_start_message_id": thread_id,
+                "thread_start_author": str(root.get("author") or "unknown-user"),
+                "thread_start_text": str(root.get("text") or "").strip(),
+                "thread_start_line": thread_start_line,
             }
         )
 

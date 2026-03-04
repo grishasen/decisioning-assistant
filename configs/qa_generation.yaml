@@ -8,9 +8,13 @@ qa_per_chunk: 1
 max_chunks: 0  # 0 means all chunks
 min_question_chars: 20
 min_answer_chars: 120
-max_answer_chars: 1200
+max_answer_chars: 2400
 # Safety guard: skip QA generation for short Webex chunks.
 min_webex_chunk_chars: 200
+# Optional Webex QA filter: only generate QA for threads where this user appears.
+webex_user_name: ""
+# Separate cap for Webex thread answers built from child messages.
+max_webex_thread_answer_chars: 3200
 
 train_ratio: 0.9
 valid_ratio: 0.08

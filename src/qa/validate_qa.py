@@ -43,6 +43,7 @@ def main() -> None:
     min_question_chars = int(qa_cfg.get("min_question_chars", 12))
     min_answer_chars = int(qa_cfg.get("min_answer_chars", 24))
     max_answer_chars = int(qa_cfg.get("max_answer_chars", 1800))
+    max_webex_thread_answer_chars = int(qa_cfg.get("max_webex_thread_answer_chars", max_answer_chars))
 
     rows: list[dict[str, Any]] = []
     seen_questions: set[str] = set()
@@ -62,7 +63,13 @@ def main() -> None:
         if len(question) < min_question_chars:
             drops["short_question"] += 1
             continue
-        if len(answer) < min_answer_chars or len(answer) > max_answer_chars:
+
+        allowed_max_answer_chars = max_answer_chars
+        qa_mode = str(qa.metadata.get("qa_generation_mode") or "").strip().lower()
+        if qa_mode == "webex_thread_question_child_messages_answer":
+            allowed_max_answer_chars = max_webex_thread_answer_chars
+
+        if len(answer) < min_answer_chars or (allowed_max_answer_chars > 0 and len(answer) > allowed_max_answer_chars):
             drops["answer_length"] += 1
             continue
         if question_key in seen_questions:

@@ -41,7 +41,9 @@ def _trim_to_token_limit(text: str, max_tokens: int) -> str:
     return candidate
 
 
-def clip_text_to_tokens(text: str, max_tokens: int, marker: str = _TRUNCATION_MARKER) -> str:
+def clip_text_to_tokens(
+    text: str, max_tokens: int, marker: str = _TRUNCATION_MARKER
+) -> str:
     cleaned = (text or "").strip()
     if max_tokens <= 0 or estimate_tokens(cleaned) <= max_tokens:
         return cleaned
@@ -162,6 +164,7 @@ def build_rag_prompt(question: str, context: str, history: str) -> str:
         "You are a technical assistant for product documentation and team discussion archives.\\n"
         "Use only the retrieved context to answer factual questions.\\n"
         "If the answer is not present in context, say you do not know.\\n\\n"
+        "You are a deep thinking AI, you may use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem.\\n\\n"
         f"Conversation history:\\n{history or 'No prior conversation.'}\\n\\n"
         f"Retrieved context:\\n{context or 'No context retrieved.'}\\n\\n"
         f"Question:\\n{question}"

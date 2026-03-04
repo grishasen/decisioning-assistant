@@ -9,7 +9,7 @@ from tqdm import tqdm
 from common.io_utils import iter_jsonl, read_yaml, write_jsonl
 from common.logging_utils import get_logger
 from common.schemas import ChunkRecord, DocumentRecord
-from common.text_utils import normalize_whitespace, split_text, stable_id
+from common.text_utils import normalize_whitespace, pack_paragraphs, split_paragraphs, split_text, stable_id
 
 logger = get_logger(__name__)
 
@@ -55,6 +55,51 @@ def _is_single_thread_chunk(doc: DocumentRecord) -> bool:
     return str(doc.metadata.get("webex_grouping", "")).lower() == "thread"
 
 
+def _ensure_webex_thread_starts_with_root(doc: DocumentRecord, text: str) -> str:
+    if not _is_single_thread_chunk(doc):
+        return text
+
+    thread_start_line = str(doc.metadata.get("thread_start_line") or "").strip()
+    if not thread_start_line:
+        return text
+
+    normalized_text = text.strip()
+    if not normalized_text:
+        return thread_start_line
+    if normalized_text.startswith(thread_start_line):
+        return normalized_text
+
+    logger.warning(
+        "Webex thread chunk %s did not start with thread root; prepending thread start line.",
+        doc.doc_id,
+    )
+    return f"{thread_start_line}\n{normalized_text}".strip()
+
+
+def _is_prechunked_pdf(doc: DocumentRecord) -> bool:
+    if doc.source_type != "pdf":
+        return False
+    split_mode = str(doc.metadata.get("split_mode", "")).strip().lower()
+    return split_mode in {"chapter_paragraph", "page_paragraph", "page_fallback"}
+
+
+def _chunk_pdf_doc(
+    doc: DocumentRecord,
+    chunk_size: int,
+    min_chunk_chars: int,
+) -> list[str]:
+    text = doc.text.strip()
+    if not text:
+        return []
+
+    paragraphs = split_paragraphs(text)
+    if not paragraphs:
+        normalized = normalize_whitespace(text)
+        return [normalized] if normalized else []
+
+    return pack_paragraphs(paragraphs, chunk_size, min_chunk_chars)
+
+
 def _chunk_docs(
     docs: list[DocumentRecord],
     chunk_size: int,
@@ -63,13 +108,26 @@ def _chunk_docs(
 ) -> list[ChunkRecord]:
     chunks: list[ChunkRecord] = []
     for doc in tqdm(docs, desc="Chunking docs"):
+        if _is_single_thread_chunk(doc):
+            preserved_text = _ensure_webex_thread_starts_with_root(doc, doc.text)
+            if preserved_text:
+                chunks.append(_make_chunk(doc, 0, preserved_text))
+            continue
+
+        if _is_prechunked_pdf(doc):
+            preserved_text = doc.text.strip()
+            if preserved_text:
+                chunks.append(_make_chunk(doc, 0, preserved_text))
+            continue
+
+        if doc.source_type == "pdf":
+            for idx, chunk_text in enumerate(_chunk_pdf_doc(doc, chunk_size, min_chunk_chars)):
+                chunks.append(_make_chunk(doc, idx, chunk_text))
+            continue
+
         base_text = doc.markdown if doc.markdown and doc.markdown.strip() else doc.text
         text = normalize_whitespace(base_text)
         if not text:
-            continue
-
-        if _is_single_thread_chunk(doc):
-            chunks.append(_make_chunk(doc, 0, text))
             continue
 
         for idx, chunk_text in enumerate(split_text(text, chunk_size, chunk_overlap)):

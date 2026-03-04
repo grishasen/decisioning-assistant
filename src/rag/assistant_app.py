@@ -207,12 +207,25 @@ def _format_date_only(raw_value: Any) -> str:
 
 
 def _extract_pdf_page(source_ref: str, metadata: dict[str, Any]) -> str:
-    for key in ("page", "page_start"):
-        raw = metadata.get(key)
-        if isinstance(raw, int):
-            return str(raw)
-        if isinstance(raw, str) and raw.isdigit():
-            return raw
+    page_start_raw = metadata.get("page_start") or metadata.get("page")
+    page_end_raw = metadata.get("page_end")
+
+    page_start: int | None = None
+    page_end: int | None = None
+    if isinstance(page_start_raw, int):
+        page_start = page_start_raw
+    elif isinstance(page_start_raw, str) and page_start_raw.isdigit():
+        page_start = int(page_start_raw)
+
+    if isinstance(page_end_raw, int):
+        page_end = page_end_raw
+    elif isinstance(page_end_raw, str) and page_end_raw.isdigit():
+        page_end = int(page_end_raw)
+
+    if page_start is not None:
+        if page_end is not None and page_end != page_start:
+            return f"{page_start}-{page_end}"
+        return str(page_start)
 
     page_match = _PAGE_REF_RE.search(source_ref)
     if page_match:
@@ -335,24 +348,40 @@ def main() -> None:
         max_ctx_max,
     )
 
-    max_history_turns = max(0, int(rag_cfg.get("max_history_turns", 6)))
-    max_history_chars = max(0, int(rag_cfg.get("max_history_chars", 3000)))
-    max_chunk_chars = max(0, int(rag_cfg.get("max_chunk_chars", 1200)))
-    max_total_context_chars = max(0, int(rag_cfg.get("max_total_context_chars", 5000)))
-    max_prompt_chars = max(0, int(rag_cfg.get("max_prompt_chars", 12000)))
+    max_history_turns_default = max(0, int(rag_cfg.get("max_history_turns", 6)))
+    max_history_chars_default = max(0, int(rag_cfg.get("max_history_chars", 3000)))
+    max_chunk_chars_default = max(0, int(rag_cfg.get("max_chunk_chars", 1200)))
+    max_total_context_chars_default = max(
+        0, int(rag_cfg.get("max_total_context_chars", 5000))
+    )
+    max_prompt_chars_default = max(0, int(rag_cfg.get("max_prompt_chars", 12000)))
 
-    max_history_tokens = max(0, int(rag_cfg.get("max_history_tokens", 0)))
-    max_chunk_tokens = max(0, int(rag_cfg.get("max_chunk_tokens", 0)))
-    max_total_context_tokens = max(0, int(rag_cfg.get("max_total_context_tokens", 0)))
-    max_prompt_tokens = max(0, int(rag_cfg.get("max_prompt_tokens", 0)))
+    max_history_tokens_default = max(0, int(rag_cfg.get("max_history_tokens", 0)))
+    max_chunk_tokens_default = max(0, int(rag_cfg.get("max_chunk_tokens", 0)))
+    max_total_context_tokens_default = max(
+        0, int(rag_cfg.get("max_total_context_tokens", 0))
+    )
+    max_prompt_tokens_default = max(0, int(rag_cfg.get("max_prompt_tokens", 0)))
 
-    fetch_k = max(1, int(rag_cfg.get("fetch_k", max(top_k_default * 3, top_k_default))))
-    score_threshold = max(0.0, float(rag_cfg.get("score_threshold", 0.0)))
-    rerank_mode = str(rag_cfg.get("rerank_mode", "cross_encoder")).strip().lower()
-    reranker_model = str(rag_cfg.get("reranker_model", "BAAI/bge-reranker-base"))
-    rerank_alpha = max(0.0, min(1.0, float(rag_cfg.get("rerank_alpha", 0.65))))
-    max_per_source = max(0, int(rag_cfg.get("max_per_source", 0)))
-    qa_pair_score_boost = float(rag_cfg.get("qa_pair_score_boost", 0.0))
+    fetch_k_default = max(
+        1, int(rag_cfg.get("fetch_k", max(top_k_default * 3, top_k_default)))
+    )
+    score_threshold_default = max(0.0, float(rag_cfg.get("score_threshold", 0.0)))
+    rerank_mode_default = str(
+        rag_cfg.get("rerank_mode", "cross_encoder")
+    ).strip().lower()
+    reranker_model_default = str(
+        rag_cfg.get("reranker_model", "BAAI/bge-reranker-base")
+    )
+    rerank_alpha_default = max(
+        0.0, min(1.0, float(rag_cfg.get("rerank_alpha", 0.65)))
+    )
+    max_per_source_default = max(0, int(rag_cfg.get("max_per_source", 0)))
+    qa_pair_score_boost_default = float(rag_cfg.get("qa_pair_score_boost", 0.0))
+
+    retrieval_modes = ["cross_encoder", "embedding_cosine", "none"]
+    if rerank_mode_default not in retrieval_modes:
+        rerank_mode_default = "cross_encoder"
 
     with st.sidebar:
         top_k = int(
@@ -361,6 +390,11 @@ def main() -> None:
                 min_value=top_k_min,
                 max_value=top_k_max,
                 value=top_k_default,
+                help=(
+                    "Number of results kept after reranking, filtering, and source "
+                    "diversity limits. Increase for broader recall; lower for tighter, "
+                    "faster retrieval."
+                ),
             )
         )
         max_context_chunks = int(
@@ -369,13 +403,220 @@ def main() -> None:
                 min_value=max_ctx_min,
                 max_value=max_ctx_max,
                 value=max_ctx_default,
+                help=(
+                    "Maximum number of retrieved rows that can be inserted into the "
+                    "prompt after budget trimming. Higher values add recall but can "
+                    "dilute relevance and increase latency."
+                ),
             )
         )
+
+        with st.expander("Advanced Retrieval"):
+            fetch_k = int(
+                st.number_input(
+                    "Fetch-k candidates",
+                    min_value=top_k,
+                    value=max(fetch_k_default, top_k),
+                    step=1,
+                    help=(
+                        "How many vector hits to pull from Qdrant before reranking. "
+                        "Raise this when the reranker is strong or the corpus is noisy; "
+                        "lower it to reduce latency."
+                    ),
+                )
+            )
+            score_threshold = float(
+                st.number_input(
+                    "Score threshold",
+                    min_value=0.0,
+                    value=score_threshold_default,
+                    step=0.01,
+                    format="%.3f",
+                    help=(
+                        "Discard raw vector hits below this Qdrant score before reranking. "
+                        "Raise it to reduce noise; lower it if relevant results are being missed."
+                    ),
+                )
+            )
+            rerank_mode = st.selectbox(
+                "Rerank mode",
+                options=retrieval_modes,
+                index=retrieval_modes.index(rerank_mode_default),
+                help=(
+                    "cross_encoder is the most accurate but slowest. embedding_cosine "
+                    "re-embeds the retrieved text for a cheaper second pass. none keeps "
+                    "the raw vector order."
+                ),
+            )
+            reranker_model = st.text_input(
+                "Reranker model",
+                value=reranker_model_default,
+                disabled=rerank_mode != "cross_encoder",
+                help=(
+                    "SentenceTransformers cross-encoder model used for pairwise reranking. "
+                    "Only used when rerank mode is cross_encoder."
+                ),
+            )
+            rerank_alpha = float(
+                st.slider(
+                    "Rerank alpha",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=rerank_alpha_default,
+                    step=0.05,
+                    disabled=rerank_mode == "none",
+                    help=(
+                        "Blend between original vector score and reranker score. "
+                        "0.0 uses only vector ranking; 1.0 uses only the reranker."
+                    ),
+                )
+            )
+            max_per_source = int(
+                st.number_input(
+                    "Max per source",
+                    min_value=0,
+                    value=max_per_source_default,
+                    step=1,
+                    help=(
+                        "Limit how many rows can come from the same source bucket "
+                        "(for example one PDF, one Webex thread, or one linked QA set). "
+                        "Set to 0 to disable."
+                    ),
+                )
+            )
+            qa_pair_score_boost = float(
+                st.number_input(
+                    "QA pair score boost",
+                    value=qa_pair_score_boost_default,
+                    step=0.01,
+                    format="%.3f",
+                    help=(
+                        "Small score bonus added to synthetic QA records after reranking. "
+                        "Useful when QA rows should compete more strongly with raw chunks."
+                    ),
+                )
+            )
+
+        with st.expander("Prompt Budgets"):
+            st.caption(
+                "Use 0 to disable token-based limits. Character budgets still apply "
+                "when set above 0."
+            )
+            max_history_turns = int(
+                st.number_input(
+                    "Max history turns",
+                    min_value=0,
+                    value=max_history_turns_default,
+                    step=1,
+                    help=(
+                        "How many prior user+assistant turns to include in the prompt. "
+                        "Lower this if the model starts drifting or repeats itself."
+                    ),
+                )
+            )
+            max_history_chars = int(
+                st.number_input(
+                    "Max history chars",
+                    min_value=0,
+                    value=max_history_chars_default,
+                    step=100,
+                    help=(
+                        "Character cap for chat history before it is inserted into the prompt. "
+                        "0 disables this character cap."
+                    ),
+                )
+            )
+            max_history_tokens = int(
+                st.number_input(
+                    "Max history tokens",
+                    min_value=0,
+                    value=max_history_tokens_default,
+                    step=50,
+                    help=(
+                        "Approximate token cap for chat history. Use this when moving to larger "
+                        "contexts and you want history to be bounded more predictably than chars."
+                    ),
+                )
+            )
+            max_chunk_chars = int(
+                st.number_input(
+                    "Max chunk chars",
+                    min_value=0,
+                    value=max_chunk_chars_default,
+                    step=100,
+                    help=(
+                        "Per-context-row character cap before rows are added to the prompt. "
+                        "Prevents one long chunk from crowding out the others."
+                    ),
+                )
+            )
+            max_chunk_tokens = int(
+                st.number_input(
+                    "Max chunk tokens",
+                    min_value=0,
+                    value=max_chunk_tokens_default,
+                    step=50,
+                    help=(
+                        "Approximate per-context-row token cap. Use together with or instead of "
+                        "character budgets when moving to models with larger context windows."
+                    ),
+                )
+            )
+            max_total_context_chars = int(
+                st.number_input(
+                    "Max total context chars",
+                    min_value=0,
+                    value=max_total_context_chars_default,
+                    step=100,
+                    help=(
+                        "Total character budget across all selected context rows. This is the "
+                        "main control for how much retrieved material reaches the model."
+                    ),
+                )
+            )
+            max_total_context_tokens = int(
+                st.number_input(
+                    "Max total context tokens",
+                    min_value=0,
+                    value=max_total_context_tokens_default,
+                    step=50,
+                    help=(
+                        "Approximate token budget across all selected context rows. Useful when "
+                        "switching to models with larger or smaller real context windows."
+                    ),
+                )
+            )
+            max_prompt_chars = int(
+                st.number_input(
+                    "Max prompt chars",
+                    min_value=0,
+                    value=max_prompt_chars_default,
+                    step=100,
+                    help=(
+                        "Final hard character cap applied to the assembled prompt after history "
+                        "and context are merged. Keep this above the history and context budgets."
+                    ),
+                )
+            )
+            max_prompt_tokens = int(
+                st.number_input(
+                    "Max prompt tokens",
+                    min_value=0,
+                    value=max_prompt_tokens_default,
+                    step=50,
+                    help=(
+                        "Final approximate token cap for the whole prompt. This is the last guard "
+                        "rail before generation starts."
+                    ),
+                )
+            )
+
         st.markdown(f"**Model**: `{model_name}`")
         st.caption(
             "Retrieval: "
             f"fetch_k={fetch_k}, mode={rerank_mode}, threshold={score_threshold:.2f}, "
-            f"max_per_source={max_per_source}"
+            f"alpha={rerank_alpha:.2f}, max_per_source={max_per_source}, "
+            f"qa_boost={qa_pair_score_boost:.2f}"
         )
         st.caption(
             "Budgets(chars): "

@@ -19,6 +19,28 @@ Context:
 """.strip()
 
 
+def webex_thread_question_prompt(thread_start: str, replies: str) -> str:
+    return f"""
+You are generating English training data for an instruction-tuned technical assistant.
+A Webex thread contains an initial message and reply messages.
+Generate exactly one natural user question that is answered by the reply messages.
+Use the whole thread for understanding, but do not answer the question.
+Do not mention Webex, timestamps, participants, or that this came from a thread.
+Do not invent facts outside the thread.
+
+Return strict JSON with this schema only:
+{{
+  "question": "..."
+}}
+
+Thread start:
+{thread_start}
+
+Reply messages:
+{replies}
+""".strip()
+
+
 def answer_with_context_prompt(question: str, context: str) -> str:
     return f"""
 You are a precise assistant.

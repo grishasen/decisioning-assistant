@@ -1,48 +1,22 @@
-model: mlx-community/gemma-3-4b-it-bf16
-data_dir: data/qa/mlx
-adapter_path: data/models/gemma-3-4b-it-bf16-lora
+model: mlx-community/DeepHermes-3-Llama-3-8B-Preview-bf16
+data: data/qa/mlx
+adapter_path: data/models/DeepHermes-3-Llama-3-8B-Preview-bf16-lora-gs
 #resume_adapter_file: data/models/gemma-3-4b-it-bf16-lora/adapters.safetensors
 train: true
 
-# The PRNG seed
-seed: 15
-
-# Number of layers to fine-tune
-num_layers: 34
-
-# M3 24GB balanced default. Increase on larger-memory systems.
-batch_size: 2
-
-# Iterations to train for.
-iters: 1400
-
-# Adam learning rate.
-learning_rate: 3e-5
-
-# Save the model every N iterations.
-save_every: 100
-steps_per_report: 25
-steps_per_eval: 100
-
-# Maximum sequence length.
-max_seq_length: 1536
-
-# Use gradient checkpointing to reduce memory use.
+seed: 17
 grad_checkpoint: true
 
-# LoRA parameters can only be specified in a config file
+# More conservative defaults for BF16 on 24 GB
+batch_size: 2
+max_seq_length: 1024
+iters: 200
+learning_rate: 5e-5
+save_every: 100
+
 lora_parameters:
-  rank: 128
-  alpha: 256.0
-  scale: 2.0
+  rank: 64
+  alpha: 128
   dropout: 0.05
-
-# Optional schedule
-#lr_schedule:
-#  name: cosine_decay
-#  warmup: 100
-#  warmup_init: 1e-6
-#  arguments: [3e-5, 3000, 5e-6]
-
-# Optional if you later want to fuse LoRA into a standalone model.
-# fused_model_path: data/models/gemma_lora_fused
+  scale: 2.0
+lora_layers: 32
