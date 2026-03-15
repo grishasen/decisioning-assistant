@@ -229,6 +229,28 @@ def cmd_rag_import(args: argparse.Namespace) -> None:
     _run(cmd, project_root)
 
 
+def cmd_webex_fetch(args: argparse.Namespace) -> None:
+    project_root = Path(args.project_root).resolve()
+    cmd = [
+        sys.executable,
+        "-m",
+        "ingestion.fetch_webex_archive",
+        "--rooms-json",
+        _resolve_path(args.rooms_json, project_root),
+        "--config",
+        _resolve_path(args.config, project_root),
+        "--output-dir",
+        _resolve_path(args.output_dir, project_root),
+        "--room-type",
+        args.room_type,
+    ]
+    if args.page_size > 0:
+        cmd.extend(["--page-size", str(args.page_size)])
+    if args.skip_existing:
+        cmd.append("--skip-existing")
+    _run(cmd, project_root)
+
+
 def cmd_app(args: argparse.Namespace) -> None:
     project_root = Path(args.project_root).resolve()
 
@@ -377,6 +399,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Drop and recreate destination collection before import.",
     )
     rag_import_parser.set_defaults(func=cmd_rag_import)
+
+    webex_fetch_parser = subparsers.add_parser(
+        "webex-fetch",
+        help="Fetch raw Webex room messages directly from the Webex API.",
+    )
+    webex_fetch_parser.add_argument("--rooms-json", required=True)
+    webex_fetch_parser.add_argument("--config", required=True)
+    webex_fetch_parser.add_argument("--output-dir", default="data/raw/webex")
+    webex_fetch_parser.add_argument(
+        "--room-type",
+        choices=["group", "direct", "all"],
+        default="group",
+        help="Which room types from rooms.json to archive (default: group).",
+    )
+    webex_fetch_parser.add_argument(
+        "--page-size",
+        type=int,
+        default=500,
+        help="Messages per Webex API page (default: 500).",
+    )
+    webex_fetch_parser.add_argument("--skip-existing", action="store_true")
+    webex_fetch_parser.set_defaults(func=cmd_webex_fetch)
 
     app_parser = subparsers.add_parser(
         "app",

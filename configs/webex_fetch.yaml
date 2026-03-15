@@ -1,0 +1,5 @@
+# Webex direct API fetch configuration.
+# Only the keys below are consumed by the fetcher.
+
+token: ""
+max_total_messages: "3650d"
