@@ -8,6 +8,7 @@ from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 
 from common.io_utils import read_yaml
+from common.vector_utils import dot_score
 
 
 def parse_args() -> argparse.Namespace:
@@ -70,8 +71,7 @@ def _embedding_cosine_scores(
 
     scores: list[float] = []
     for doc_vector in doc_vectors:
-        score = sum(float(a) * float(b) for a, b in zip(query_vector, doc_vector))
-        scores.append(float(score))
+        scores.append(dot_score(query_vector, doc_vector))
     return scores
 
 

@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
 from sentence_transformers import SentenceTransformer
+
+from common.vector_utils import dot_score
 
 
 @dataclass(frozen=True)
@@ -66,7 +67,7 @@ def _embedding_relevance_scores(
 ) -> list[float]:
     query_vector = embedder.encode([question], normalize_embeddings=normalize_embeddings)[0]
     answer_vectors = embedder.encode(candidates, normalize_embeddings=normalize_embeddings)
-    return [np.dot(query_vector, vector) for vector in answer_vectors]
+    return [dot_score(query_vector, vector) for vector in answer_vectors]
 
 
 def _embedding_support_scores(
@@ -96,7 +97,7 @@ def _embedding_support_scores(
 
     scores: list[float] = []
     for answer_vector in answer_vectors:
-        pair_scores = [np.dot(query_vector, answer_vector) for query_vector in query_vectors]
+        pair_scores = [dot_score(query_vector, answer_vector) for query_vector in query_vectors]
         scores.append(max(pair_scores) if pair_scores else 0.0)
     return scores
 
