@@ -11,6 +11,7 @@ from sentence_transformers import SentenceTransformer
 
 from common.io_utils import read_yaml
 from common.mlx_utils import MLXLoadedGenerator
+from rag.answer_selection import AnswerSelectionConfig, generate_best_answer
 from rag.prompt_budget import (
     build_rag_prompt,
     clip_text,
@@ -86,6 +87,18 @@ class LocalRetriever:
             except Exception:
                 # Fall back to embedding rerank if cross-encoder cannot be loaded.
                 self._rerank_mode = "embedding_cosine"
+
+    @property
+    def embedder(self) -> SentenceTransformer:
+        return self._embedder
+
+    @property
+    def normalize_embeddings(self) -> bool:
+        return self._normalize_embeddings
+
+    @property
+    def cross_encoder(self) -> Any | None:
+        return self._cross_encoder
 
     def search(self, question: str, top_k: int) -> list[dict[str, Any]]:
         requested_top_k = max(1, int(top_k))
@@ -379,9 +392,31 @@ def main() -> None:
     max_per_source_default = max(0, int(rag_cfg.get("max_per_source", 0)))
     qa_pair_score_boost_default = float(rag_cfg.get("qa_pair_score_boost", 0.0))
 
+    answer_sample_count_min = max(1, int(rag_cfg.get("answer_sample_count_min", 1)))
+    answer_sample_count_max = max(
+        answer_sample_count_min,
+        int(rag_cfg.get("answer_sample_count_max", 12)),
+    )
+    answer_sample_count_default = _clamp(
+        int(rag_cfg.get("answer_sample_count", 4)),
+        answer_sample_count_min,
+        answer_sample_count_max,
+    )
+    answer_rerank_mode_default = str(
+        rag_cfg.get("answer_rerank_mode", "cross_encoder")
+    ).strip().lower()
+    answer_rerank_alpha_default = max(
+        0.0, min(1.0, float(rag_cfg.get("answer_rerank_alpha", 0.7)))
+    )
+    answer_rerank_support_top_k_default = max(
+        1, int(rag_cfg.get("answer_rerank_support_top_k", 3))
+    )
+
     retrieval_modes = ["cross_encoder", "embedding_cosine", "none"]
     if rerank_mode_default not in retrieval_modes:
         rerank_mode_default = "cross_encoder"
+    if answer_rerank_mode_default not in retrieval_modes:
+        answer_rerank_mode_default = "cross_encoder"
 
     with st.sidebar:
         top_k = int(
@@ -493,6 +528,57 @@ def main() -> None:
                     help=(
                         "Small score bonus added to synthetic QA records after reranking. "
                         "Useful when QA rows should compete more strongly with raw chunks."
+                    ),
+                )
+            )
+
+        with st.expander("Answer Selection"):
+            answer_sample_count = int(
+                st.number_input(
+                    "Answer candidates",
+                    min_value=answer_sample_count_min,
+                    max_value=answer_sample_count_max,
+                    value=answer_sample_count_default,
+                    help=(
+                        "How many independently sampled answers to generate from the same "
+                        "RAG prompt. 1 disables Best-of-N. Higher values improve robustness "
+                        "but increase latency."
+                    ),
+                )
+            )
+            answer_rerank_mode = st.selectbox(
+                "Answer rerank mode",
+                options=retrieval_modes,
+                index=retrieval_modes.index(answer_rerank_mode_default),
+                help=(
+                    "How to score multiple answer candidates after generation. cross_encoder "
+                    "is strongest if available, embedding_cosine is lighter, and none keeps "
+                    "generation order."
+                ),
+            )
+            answer_rerank_alpha = float(
+                st.slider(
+                    "Answer rerank alpha",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=answer_rerank_alpha_default,
+                    step=0.05,
+                    disabled=answer_rerank_mode == "none",
+                    help=(
+                        "Blend between question-answer relevance and support from the retrieved "
+                        "context. Higher values favor grounded support over general answer fit."
+                    ),
+                )
+            )
+            answer_rerank_support_top_k = int(
+                st.number_input(
+                    "Answer support top-k",
+                    min_value=1,
+                    max_value=max(1, max_context_chunks),
+                    value=min(answer_rerank_support_top_k_default, max(1, max_context_chunks)),
+                    help=(
+                        "How many of the top selected context rows to use when scoring how well "
+                        "each answer is supported by retrieved evidence."
                     ),
                 )
             )
@@ -619,6 +705,11 @@ def main() -> None:
             f"qa_boost={qa_pair_score_boost:.2f}"
         )
         st.caption(
+            "Answers: "
+            f"candidates={answer_sample_count}, mode={answer_rerank_mode}, "
+            f"alpha={answer_rerank_alpha:.2f}, support_top_k={answer_rerank_support_top_k}"
+        )
+        st.caption(
             "Budgets(chars): "
             f"history={max_history_chars}, chunk={max_chunk_chars}, "
             f"context={max_total_context_chars}, prompt={max_prompt_chars}"
@@ -641,6 +732,12 @@ def main() -> None:
         rerank_alpha=rerank_alpha,
         max_per_source=max_per_source,
         qa_pair_score_boost=qa_pair_score_boost,
+    )
+    answer_sel_cfg = AnswerSelectionConfig(
+        sample_count=answer_sample_count,
+        rerank_mode=answer_rerank_mode,
+        rerank_alpha=answer_rerank_alpha,
+        support_top_k=answer_rerank_support_top_k,
     )
     gen_cfg = GenerationConfig(
         model_name=model_name,
@@ -710,16 +807,33 @@ def main() -> None:
                 )
                 prompt = clip_text(prompt, max_prompt_chars)
                 prompt = clip_text_to_tokens(prompt, max_prompt_tokens)
-                answer = generator.generate(
+                answer, ranked_candidates = generate_best_answer(
+                    generator=generator,
                     prompt=prompt,
+                    question=question,
+                    context_rows=selected_rows,
                     max_tokens=gen_cfg.max_tokens,
                     temperature=gen_cfg.temperature,
+                    config=answer_sel_cfg,
+                    embedder=retriever.embedder,
+                    normalize_embeddings=retriever.normalize_embeddings,
+                    cross_encoder=retriever.cross_encoder if answer_sel_cfg.rerank_mode == "cross_encoder" else None,
                 )
             except Exception as exc:  # noqa: BLE001
                 answer = f"Generation failed: {exc}"
                 selected_rows = []
+                ranked_candidates = []
 
         st.markdown(answer)
+        if len(ranked_candidates) > 1:
+            with st.expander("Answer Candidates"):
+                for idx, candidate in enumerate(ranked_candidates, start=1):
+                    st.markdown(
+                        f"{idx}. score={float(candidate.get('score') or 0.0):.4f}, "
+                        f"relevance={float(candidate.get('relevance_score') or 0.0):.4f}, "
+                        f"support={float(candidate.get('support_score') or 0.0):.4f}"
+                    )
+                    st.text(str(candidate.get("answer") or ""))
         if selected_rows:
             with st.expander("Sources"):
                 for idx, row in enumerate(selected_rows, start=1):

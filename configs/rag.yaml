@@ -38,6 +38,19 @@ qa_pair_score_boost: 0.03
 # 0 disables per-source cap
 max_per_source: 3
 
+# Answer selection after RAG context is built.
+# Generate multiple answers, then rerank them against the question + retrieved context.
+answer_sample_count: 4
+answer_sample_count_min: 1
+answer_sample_count_max: 12
+# none | embedding_cosine | cross_encoder
+answer_rerank_mode: cross_encoder
+# Blend between question-answer relevance and context-grounded support.
+# final = (1-answer_rerank_alpha) * relevance + answer_rerank_alpha * support
+answer_rerank_alpha: 0.7
+# Number of top context rows used to score answer support.
+answer_rerank_support_top_k: 3
+
 max_context_chunks: 6
 max_context_chunks_min: 1
 max_context_chunks_max: 50
