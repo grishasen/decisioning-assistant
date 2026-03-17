@@ -145,7 +145,7 @@ decisioning-assistant app --server-port 8501
 ```
 
 ## Direct Webex Fetch
-The project no longer depends on `webexspacearchive` for fetching room history. Raw Webex exports can be created directly through the Webex API.
+Raw Webex exports can be created directly through the Webex API.
 
 Example:
 ```bash
