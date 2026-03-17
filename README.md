@@ -93,21 +93,24 @@ pip install -e .[dev]
 1. Fetch raw Webex spaces if needed.
 2. Put PDFs into `data/raw/pdf/`.
 3. Run ingestion and chunking.
-4. Generate QA.
-5. Fine-tune if needed.
+4. Generate QA (optional step).
+5. Fine-tune model using QA dataset from step 4 (optional).
 6. Build or update the RAG index.
 7. Start the chat app.
 
 Example:
 ```bash
+#required for webex threads
 decisioning-assistant webex-fetch \
   --rooms-json configs/rooms.json \
   --config configs/webex_fetch.yaml \
   --output-dir data/raw/webex
 
-decisioning-assistant ingest
-decisioning-assistant qa
-decisioning-assistant finetune --finetune-config configs/finetune.yaml
+#put any pdf into pdf dir
+
+decisioning-assistant ingest #required step
+decisioning-assistant qa #optional
+decisioning-assistant finetune --finetune-config configs/finetune.yaml #optional
 decisioning-assistant rag-index --recreate
 decisioning-assistant app --server-port 8501
 ```
