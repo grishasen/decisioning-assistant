@@ -100,7 +100,7 @@ pip install -e .[dev]
 
 Example:
 ```bash
-#required for webex dics
+#required for webex threads
 decisioning-assistant webex-fetch \
   --rooms-json configs/rooms.json \
   --config configs/webex_fetch.yaml \
