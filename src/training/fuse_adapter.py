@@ -24,8 +24,6 @@ def main() -> None:
     fused_path = str(cfg.get("fused_model_path", "data/models/gemma_lora_fused"))
 
     cmd = [
-        "python",
-        "-m",
         "mlx_lm.fuse",
         "--model",
         model,
