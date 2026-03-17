@@ -100,14 +100,17 @@ pip install -e .[dev]
 
 Example:
 ```bash
+#required for webex dics
 decisioning-assistant webex-fetch \
   --rooms-json configs/rooms.json \
   --config configs/webex_fetch.yaml \
   --output-dir data/raw/webex
 
-decisioning-assistant ingest
-decisioning-assistant qa
-decisioning-assistant finetune --finetune-config configs/finetune.yaml
+#put any pdf into pdf dir
+
+decisioning-assistant ingest #required step
+decisioning-assistant qa #optional
+decisioning-assistant finetune --finetune-config configs/finetune.yaml #optional
 decisioning-assistant rag-index --recreate
 decisioning-assistant app --server-port 8501
 ```
