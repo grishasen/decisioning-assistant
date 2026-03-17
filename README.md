@@ -93,8 +93,8 @@ pip install -e .[dev]
 1. Fetch raw Webex spaces if needed.
 2. Put PDFs into `data/raw/pdf/`.
 3. Run ingestion and chunking.
-4. Generate QA.
-5. Fine-tune if needed.
+4. Generate QA (optional step).
+5. Fine-tune model using QA dataset from step 4 (optional).
 6. Build or update the RAG index.
 7. Start the chat app.
 
