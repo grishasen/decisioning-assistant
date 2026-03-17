@@ -7,7 +7,7 @@
 # - chunks from source documents
 # - synthetic QA pairs generated from those chunks
 chunks_path: data/staging/chunks/chunks.jsonl
-include_qa: true
+include_qa: false
 qa_path: data/qa/qa_clean.jsonl
 # question_answer | question_only | answer_only
 qa_text_mode: question_answer
@@ -29,7 +29,7 @@ score_threshold: 0.12
 # none | embedding_cosine | cross_encoder
 rerank_mode: cross_encoder
 # Used only when rerank_mode=cross_encoder
-reranker_model: BAAI/bge-reranker-base
+reranker_model: BAAI/bge-reranker-v2-m3
 # Blend between rerank score and original vector score.
 # final = rerank_alpha * rerank + (1-rerank_alpha) * vector_score
 rerank_alpha: 0.65

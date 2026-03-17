@@ -93,6 +93,7 @@ def _compact_qa_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
             "room_title",
             "thread_id",
             "message_count",
+            "webex_parent_message_link",
             "created_at",
             "updated_at",
             "ingested_at",

@@ -202,7 +202,7 @@ def _infer_source_type(row: dict[str, Any]) -> str:
     return "unknown"
 
 
-def _format_date_only(raw_value: Any) -> str:
+def _format_datetime(raw_value: Any) -> str:
     if raw_value is None:
         return "unknown"
 
@@ -212,10 +212,8 @@ def _format_date_only(raw_value: Any) -> str:
 
     normalized = text.replace("Z", "+00:00")
     try:
-        return datetime.fromisoformat(normalized).date().isoformat()
+        return datetime.fromisoformat(normalized).isoformat(sep=" ", timespec="seconds")
     except ValueError:
-        if len(text) >= 10 and text[4] == "-" and text[7] == "-":
-            return text[:10]
         return text
 
 
@@ -284,8 +282,10 @@ def _format_source_line(row: dict[str, Any]) -> str:
         room_title = str(
             metadata.get("room_title") or metadata.get("title") or "unknown"
         )
-        message_date = _format_date_only(metadata.get("created_at"))
-        return f"- Webex Space: `{room_title}` | Date: `{message_date}` ({score_text})"
+        message_timestamp = _format_datetime(metadata.get("created_at"))
+        return (
+            f"- Webex Space: `{room_title}` | Timestamp: `{message_timestamp}` ({score_text})"
+        )
 
     record_type = str(row.get("record_type") or "chunk")
     return f"- `{source_ref}` [{record_type}] ({score_text})"
@@ -302,6 +302,15 @@ def _source_popup_text(row: dict[str, Any], max_chars: int = 20000) -> str:
     return value[:max_chars].rstrip() + "\n\n...[truncated]"
 
 
+def _webex_parent_message_link(row: dict[str, Any]) -> str:
+    metadata_raw = row.get("metadata")
+    metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+    value = metadata.get("webex_parent_message_link")
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+
 def _render_source_row(row: dict[str, Any], index: int) -> None:
     left, right = st.columns([0.82, 0.18], vertical_alignment="top")
 
@@ -310,6 +319,10 @@ def _render_source_row(row: dict[str, Any], index: int) -> None:
 
     with right:
         with st.popover(f"Show text", type="tertiary"):
+            webex_link = _webex_parent_message_link(row)
+            if webex_link:
+                st.markdown(f"[Open parent message in Webex]({webex_link})")
+                st.caption(webex_link)
             st.caption("Retrieved document text")
             st.text(_source_popup_text(row))
 

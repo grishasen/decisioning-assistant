@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -16,6 +17,53 @@ logger = get_logger(__name__)
 
 
 MESSAGE_KEYS = ("messages", "items", "posts", "results", "thread", "replies")
+
+
+def _decode_webex_entity_uri(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+
+    text = value.strip()
+    if not text:
+        return ""
+
+    if "://" in text:
+        return text
+
+    padding = "=" * (-len(text) % 4)
+    try:
+        return base64.urlsafe_b64decode(text + padding).decode("utf-8")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _extract_webex_entity_token(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+
+    text = value.strip()
+    if not text:
+        return ""
+
+    if "://" not in text and text.count("-") == 4:
+        return text.lower()
+
+    decoded = _decode_webex_entity_uri(text)
+    if not decoded:
+        return ""
+
+    token = decoded.rsplit("/", 1)[-1].strip()
+    if token.count("-") == 4:
+        return token.lower()
+    return token
+
+
+def _build_webex_parent_message_link(room_id: Any, message_id: Any) -> str:
+    room_token = _extract_webex_entity_token(room_id)
+    message_token = _extract_webex_entity_token(message_id)
+    if not room_token or not message_token:
+        return ""
+    return f"webexteams://im?space={room_token}&message={message_token}"
 
 
 def _coerce_datetime(value: Any) -> datetime | None:
@@ -267,6 +315,10 @@ def _build_thread_records(
                 "thread_start_author": str(root.get("author") or "unknown-user"),
                 "thread_start_text": str(root.get("text") or "").strip(),
                 "thread_start_line": thread_start_line,
+                "webex_parent_message_link": _build_webex_parent_message_link(
+                    room_id,
+                    thread_id,
+                ),
             }
         )
 
@@ -316,6 +368,7 @@ def _build_message_records(
 
         created_at = _coerce_datetime(msg.get("created"))
         updated_at = _coerce_datetime(msg.get("updated")) or created_at
+        parent_message_id = thread_id
 
         metadata = build_metadata(
             product=product,
@@ -339,6 +392,10 @@ def _build_message_records(
                 "files": msg.get("files", []),
                 "is_thread_document": False,
                 "webex_grouping": "message",
+                "webex_parent_message_link": _build_webex_parent_message_link(
+                    room_id,
+                    parent_message_id,
+                ),
             }
         )
 
