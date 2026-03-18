@@ -3,8 +3,6 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from sentence_transformers import SentenceTransformer
-
 from common.io_utils import read_yaml
 from common.mlx_utils import MLXLoadedGenerator
 from rag.answer_selection import AnswerSelectionConfig, generate_best_answer
@@ -15,7 +13,11 @@ from rag.prompt_budget import (
     format_context,
     select_context_rows,
 )
-from rag.retrieve import run_retrieval
+from rag.retrieve import (
+    build_local_retriever,
+    resolve_answer_rerank_resources,
+    resolve_top_k,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,7 +38,8 @@ def main() -> None:
     rag_cfg = read_yaml(args.rag_config)
     model_cfg = read_yaml(args.models_config)
 
-    rows = run_retrieval(args.question, rag_cfg, args.top_k)
+    retriever = build_local_retriever(rag_cfg)
+    rows = retriever.search(args.question, resolve_top_k(rag_cfg, args.top_k))
 
     max_context_chunks = int(rag_cfg.get("max_context_chunks", 4))
     max_chunk_chars = int(rag_cfg.get("max_chunk_chars", 1200))
@@ -69,6 +72,7 @@ def main() -> None:
         rerank_alpha=max(0.0, min(1.0, float(rag_cfg.get("answer_rerank_alpha", 0.7)))),
         support_top_k=max(1, int(rag_cfg.get("answer_rerank_support_top_k", 3))),
     )
+    reranker_model = str(rag_cfg.get("reranker_model", "BAAI/bge-reranker-base"))
 
     adapter_path = args.adapter_path or answer_cfg.get("adapter_path") or None
 
@@ -82,24 +86,12 @@ def main() -> None:
         trust_remote_code=trust_remote_code,
     )
 
-    answer_cross_encoder = None
-    if answer_sel_cfg.sample_count > 1 and answer_sel_cfg.rerank_mode == "cross_encoder":
-        try:
-            from sentence_transformers import CrossEncoder
-
-            answer_cross_encoder = CrossEncoder(
-                str(rag_cfg.get("reranker_model", "BAAI/bge-reranker-base"))
-            )
-        except Exception:
-            answer_cross_encoder = None
-
-    answer_embedder = None
-    if answer_sel_cfg.sample_count > 1 and (
-        answer_sel_cfg.rerank_mode == "embedding_cosine" or answer_cross_encoder is None
-    ):
-        answer_embedder = SentenceTransformer(
-            str(rag_cfg.get("embedding_model", "BAAI/bge-base-en-v1.5"))
-        )
+    answer_embedder, answer_cross_encoder = resolve_answer_rerank_resources(
+        retriever=retriever,
+        sample_count=answer_sel_cfg.sample_count,
+        rerank_mode=answer_sel_cfg.rerank_mode,
+        reranker_model=reranker_model,
+    )
 
     answer, ranked_candidates = generate_best_answer(
         generator=generator,
@@ -110,7 +102,7 @@ def main() -> None:
         temperature=temperature,
         config=answer_sel_cfg,
         embedder=answer_embedder,
-        normalize_embeddings=bool(rag_cfg.get("normalize_embeddings", True)),
+        normalize_embeddings=retriever.normalize_embeddings,
         cross_encoder=answer_cross_encoder,
     )
 

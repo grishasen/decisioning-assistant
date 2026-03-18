@@ -6,8 +6,6 @@ from datetime import datetime
 from typing import Any
 
 import streamlit as st
-from qdrant_client import QdrantClient
-from sentence_transformers import SentenceTransformer
 
 from common.io_utils import read_yaml
 from common.mlx_utils import MLXLoadedGenerator
@@ -20,7 +18,7 @@ from rag.prompt_budget import (
     format_history,
     select_context_rows,
 )
-from rag.retrieve import postprocess_retrieval_rows
+from rag.retrieve import LocalRetriever, resolve_answer_rerank_resources
 
 _PAGE_REF_RE = re.compile(r"#page=(\d+)")
 _SECTION_REF_RE = re.compile(r"#section=(\d+)(?:-\d+)?")
@@ -48,106 +46,6 @@ class GenerationConfig:
     temperature: float
     adapter_path: str | None
     trust_remote_code: bool
-
-
-class LocalRetriever:
-    def __init__(
-        self,
-        qdrant_path: str,
-        collection_name: str,
-        embedding_model: str,
-        normalize_embeddings: bool,
-        fetch_k: int,
-        score_threshold: float,
-        rerank_mode: str,
-        reranker_model: str,
-        rerank_alpha: float,
-        max_per_source: int,
-        qa_pair_score_boost: float,
-    ) -> None:
-        self._collection_name = collection_name
-        self._normalize_embeddings = normalize_embeddings
-        self._embedder = SentenceTransformer(embedding_model)
-        self._client = QdrantClient(path=qdrant_path)
-
-        self._fetch_k = max(1, int(fetch_k))
-        self._score_threshold = max(0.0, float(score_threshold))
-        self._rerank_mode = str(rerank_mode or "none").strip().lower()
-        self._reranker_model = str(reranker_model)
-        self._rerank_alpha = max(0.0, min(1.0, float(rerank_alpha)))
-        self._max_per_source = max(0, int(max_per_source))
-        self._qa_pair_score_boost = float(qa_pair_score_boost)
-
-        self._cross_encoder: Any | None = None
-        if self._rerank_mode == "cross_encoder":
-            try:
-                from sentence_transformers import CrossEncoder
-
-                self._cross_encoder = CrossEncoder(self._reranker_model)
-            except Exception:
-                # Fall back to embedding rerank if cross-encoder cannot be loaded.
-                self._rerank_mode = "embedding_cosine"
-
-    @property
-    def embedder(self) -> SentenceTransformer:
-        return self._embedder
-
-    @property
-    def normalize_embeddings(self) -> bool:
-        return self._normalize_embeddings
-
-    @property
-    def cross_encoder(self) -> Any | None:
-        return self._cross_encoder
-
-    def search(self, question: str, top_k: int) -> list[dict[str, Any]]:
-        requested_top_k = max(1, int(top_k))
-        fetch_k = max(requested_top_k, self._fetch_k)
-
-        vector = self._embedder.encode(
-            [question],
-            normalize_embeddings=self._normalize_embeddings,
-        )[0].tolist()
-
-        resp = self._client.query_points(
-            collection_name=self._collection_name,
-            query=vector,
-            limit=fetch_k,
-            with_payload=True,
-        )
-
-        rows: list[dict[str, Any]] = []
-        for point in resp.points:
-            payload = point.payload or {}
-            qdrant_score = float(point.score or 0.0)
-            rows.append(
-                {
-                    "score": qdrant_score,
-                    "qdrant_score": qdrant_score,
-                    "chunk_id": payload.get("chunk_id"),
-                    "doc_id": payload.get("doc_id"),
-                    "source_ref": payload.get("source_ref"),
-                    "source_type": payload.get("source_type"),
-                    "record_type": payload.get("record_type", "chunk"),
-                    "text": payload.get("text") or "",
-                    "metadata": payload.get("metadata", {}),
-                }
-            )
-
-        return postprocess_retrieval_rows(
-            question=question,
-            rows=rows,
-            embedder=self._embedder,
-            normalize_embeddings=self._normalize_embeddings,
-            top_k=requested_top_k,
-            score_threshold=self._score_threshold,
-            rerank_mode=self._rerank_mode,
-            reranker_model=self._reranker_model,
-            rerank_alpha=self._rerank_alpha,
-            max_per_source=self._max_per_source,
-            qa_pair_score_boost=self._qa_pair_score_boost,
-            cross_encoder=self._cross_encoder,
-        )
 
 
 @st.cache_resource(show_spinner=False)
@@ -820,6 +718,12 @@ def main() -> None:
                 )
                 prompt = clip_text(prompt, max_prompt_chars)
                 prompt = clip_text_to_tokens(prompt, max_prompt_tokens)
+                answer_embedder, answer_cross_encoder = resolve_answer_rerank_resources(
+                    retriever=retriever,
+                    sample_count=answer_sel_cfg.sample_count,
+                    rerank_mode=answer_sel_cfg.rerank_mode,
+                    reranker_model=reranker_model,
+                )
                 answer, ranked_candidates = generate_best_answer(
                     generator=generator,
                     prompt=prompt,
@@ -828,9 +732,9 @@ def main() -> None:
                     max_tokens=gen_cfg.max_tokens,
                     temperature=gen_cfg.temperature,
                     config=answer_sel_cfg,
-                    embedder=retriever.embedder,
+                    embedder=answer_embedder,
                     normalize_embeddings=retriever.normalize_embeddings,
-                    cross_encoder=retriever.cross_encoder if answer_sel_cfg.rerank_mode == "cross_encoder" else None,
+                    cross_encoder=answer_cross_encoder,
                 )
             except Exception as exc:  # noqa: BLE001
                 answer = f"Generation failed: {exc}"

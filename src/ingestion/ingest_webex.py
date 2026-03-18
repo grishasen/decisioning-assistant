@@ -12,6 +12,7 @@ from common.io_utils import iter_jsonl, read_json, write_jsonl
 from common.logging_utils import get_logger
 from common.schemas import DocumentRecord, build_metadata, normalize_doc_type
 from common.text_utils import normalize_whitespace, stable_id
+from common.webex_utils import format_webex_thread_message_line, parse_webex_datetime
 
 logger = get_logger(__name__)
 
@@ -67,15 +68,7 @@ def _build_webex_parent_message_link(room_id: Any, message_id: Any) -> str:
 
 
 def _coerce_datetime(value: Any) -> datetime | None:
-    if not value or not isinstance(value, str):
-        return None
-    value = value.strip()
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+    return parse_webex_datetime(value)
 
 
 def _message_text(msg: dict[str, Any]) -> str:
@@ -145,12 +138,11 @@ def _room_title_from_path(path: Path) -> str:
 
 def _build_thread_message_line(item: dict[str, Any]) -> str:
     created = item.get("created")
-    author = str(item.get("author") or "unknown-user")
-    ts = created.isoformat() if isinstance(created, datetime) else "unknown-time"
-    message_text = str(item.get("text") or "").strip()
-    if not message_text:
-        return ""
-    return f"[{ts}] {author}: {message_text}"
+    return format_webex_thread_message_line(
+        author=str(item.get("author") or "unknown-user"),
+        message_text=str(item.get("text") or "").strip(),
+        created=created if isinstance(created, datetime) else None,
+    )
 
 
 def _sorted_thread_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -260,10 +252,15 @@ def _build_thread_records(
 
             created = item.get("created")
             author = str(item.get("author") or "unknown-user")
-            ts = created.isoformat() if isinstance(created, datetime) else "unknown-time"
             markdown = item.get("markdown")
             if isinstance(markdown, str) and markdown.strip():
-                markdown_lines.append(f"[{ts}] {author}: {markdown.strip()}")
+                markdown_lines.append(
+                    format_webex_thread_message_line(
+                        author=author,
+                        message_text=markdown.strip(),
+                        created=created if isinstance(created, datetime) else None,
+                    )
+                )
 
             msg_id = str(item.get("message_id") or "")
             if msg_id:

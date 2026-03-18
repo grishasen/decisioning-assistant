@@ -11,6 +11,7 @@ from common.mlx_utils import MLXLoadedGenerator, extract_first_json_object
 from common.prompts import qa_generation_prompt, webex_thread_question_prompt
 from common.schemas import ChunkRecord, QARecord
 from common.text_utils import normalize_whitespace, stable_id
+from common.webex_utils import WebexThreadLine, parse_webex_thread_lines, parse_webex_thread_message_line
 
 logger = get_logger(__name__)
 
@@ -92,26 +93,12 @@ def _normalize_match_value(value: Any) -> str:
     return normalize_whitespace(value).lower()
 
 
-def _extract_author_from_thread_line(line: str) -> str:
-    if "] " not in line or ":" not in line:
-        return ""
-    after_timestamp = line.split("] ", 1)[1]
-    return after_timestamp.split(":", 1)[0].strip()
+def _webex_thread_messages(chunk: ChunkRecord) -> list[WebexThreadLine]:
+    return parse_webex_thread_lines(chunk.text)
 
 
-def _extract_message_from_thread_line(line: str) -> str:
-    stripped = line.strip()
-    if not stripped:
-        return ""
-    if "] " in stripped:
-        stripped = stripped.split("] ", 1)[1]
-    if ":" not in stripped:
-        return normalize_whitespace(stripped)
-    return normalize_whitespace(stripped.split(":", 1)[1])
-
-
-def _webex_thread_reply_lines(chunk: ChunkRecord) -> list[str]:
-    lines = [line.strip() for line in chunk.text.splitlines() if line.strip()]
+def _webex_thread_replies(chunk: ChunkRecord) -> list[WebexThreadLine]:
+    lines = _webex_thread_messages(chunk)
     if len(lines) <= 1:
         return []
     return lines[1:]
@@ -122,9 +109,8 @@ def _webex_chunk_matches_user(chunk: ChunkRecord, normalized_user_name: str) -> 
         return True
 
     if _is_webex_thread_chunk(chunk):
-        for line in _webex_thread_reply_lines(chunk):
-            author = _extract_author_from_thread_line(line)
-            if author and normalized_user_name in _normalize_match_value(author):
+        for item in _webex_thread_replies(chunk):
+            if item.author and normalized_user_name in _normalize_match_value(item.author):
                 return True
         return False
 
@@ -140,8 +126,8 @@ def _webex_chunk_matches_user(chunk: ChunkRecord, normalized_user_name: str) -> 
             return True
 
     for line in chunk.text.splitlines():
-        author = _extract_author_from_thread_line(line.strip())
-        if author and normalized_user_name in _normalize_match_value(author):
+        parsed_line = parse_webex_thread_message_line(line.strip())
+        if parsed_line and normalized_user_name in _normalize_match_value(parsed_line.author):
             return True
 
     return False
@@ -154,25 +140,23 @@ def _build_webex_thread_answer(
     metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
     thread_start_text = normalize_whitespace(str(metadata.get("thread_start_text") or ""))
 
-    lines = [line.strip() for line in chunk.text.splitlines() if line.strip()]
-    if not lines:
+    thread_lines = _webex_thread_messages(chunk)
+    if not thread_lines:
         return None
 
-    reply_lines = _webex_thread_reply_lines(chunk)
+    reply_lines = _webex_thread_replies(chunk)
     if not thread_start_text:
-        thread_start_text = _extract_message_from_thread_line(lines[0])
+        thread_start_text = thread_lines[0].message_text
     if not thread_start_text or not reply_lines:
         return None
 
     selected_reply_messages: list[str] = []
     for line in reply_lines:
-        author = _extract_author_from_thread_line(line)
-        if normalized_user_name and normalized_user_name not in _normalize_match_value(author):
+        if normalized_user_name and normalized_user_name not in _normalize_match_value(line.author):
             continue
 
-        message = _extract_message_from_thread_line(line)
-        if message:
-            selected_reply_messages.append(message)
+        if line.message_text:
+            selected_reply_messages.append(line.message_text)
 
     answer = "\n\n".join(selected_reply_messages).strip()
     if not answer:

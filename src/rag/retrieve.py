@@ -75,6 +75,15 @@ def _embedding_cosine_scores(
     return scores
 
 
+def load_cross_encoder_model(reranker_model: str) -> Any | None:
+    try:
+        from sentence_transformers import CrossEncoder
+
+        return CrossEncoder(reranker_model)
+    except Exception:
+        return None
+
+
 def _cross_encoder_scores(
     question: str,
     rows: list[dict[str, Any]],
@@ -84,11 +93,9 @@ def _cross_encoder_scores(
     if not rows:
         return []
 
-    model = cross_encoder
+    model = cross_encoder or load_cross_encoder_model(reranker_model)
     if model is None:
-        from sentence_transformers import CrossEncoder
-
-        model = CrossEncoder(reranker_model)
+        raise RuntimeError(f"Could not load cross-encoder reranker: {reranker_model}")
 
     pairs = [(question, str(row.get("text") or "")) for row in rows]
     raw_scores = model.predict(pairs, show_progress_bar=False)
@@ -201,7 +208,15 @@ def postprocess_retrieval_rows(
                 cross_encoder=cross_encoder,
             )
         except Exception:
-            rerank_scores = [row["qdrant_score"] for row in candidates]
+            try:
+                rerank_scores = _embedding_cosine_scores(
+                    question,
+                    candidates,
+                    embedder,
+                    normalize_embeddings=normalize_embeddings,
+                )
+            except Exception:
+                rerank_scores = [row["qdrant_score"] for row in candidates]
     else:
         rerank_scores = [row["qdrant_score"] for row in candidates]
 
@@ -224,72 +239,180 @@ def postprocess_retrieval_rows(
     return _apply_source_cap(scored, max_per_source=max_per_source, top_k=top_k)
 
 
+class LocalRetriever:
+    def __init__(
+        self,
+        qdrant_path: str,
+        collection_name: str,
+        embedding_model: str,
+        normalize_embeddings: bool,
+        fetch_k: int,
+        score_threshold: float,
+        rerank_mode: str,
+        reranker_model: str,
+        rerank_alpha: float,
+        max_per_source: int,
+        qa_pair_score_boost: float,
+    ) -> None:
+        self._collection_name = collection_name
+        self._normalize_embeddings = normalize_embeddings
+        self._embedder = SentenceTransformer(embedding_model)
+        self._client = QdrantClient(path=qdrant_path)
+
+        self._fetch_k = max(1, int(fetch_k))
+        self._score_threshold = max(0.0, float(score_threshold))
+        self._rerank_mode = str(rerank_mode or "none").strip().lower()
+        self._reranker_model = str(reranker_model)
+        self._rerank_alpha = max(0.0, min(1.0, float(rerank_alpha)))
+        self._max_per_source = max(0, int(max_per_source))
+        self._qa_pair_score_boost = float(qa_pair_score_boost)
+
+        self._cross_encoder: Any | None = None
+        if self._rerank_mode == "cross_encoder":
+            self._cross_encoder = load_cross_encoder_model(self._reranker_model)
+            if self._cross_encoder is None:
+                self._rerank_mode = "embedding_cosine"
+
+    @property
+    def embedder(self) -> SentenceTransformer:
+        return self._embedder
+
+    @property
+    def normalize_embeddings(self) -> bool:
+        return self._normalize_embeddings
+
+    @property
+    def cross_encoder(self) -> Any | None:
+        return self._cross_encoder
+
+    @property
+    def reranker_model(self) -> str:
+        return self._reranker_model
+
+    @property
+    def rerank_mode(self) -> str:
+        return self._rerank_mode
+
+    def ensure_cross_encoder(self, reranker_model: str | None = None) -> Any | None:
+        if self._cross_encoder is not None:
+            return self._cross_encoder
+
+        model_name = str(reranker_model or self._reranker_model)
+        loaded = load_cross_encoder_model(model_name)
+        if loaded is None:
+            return None
+
+        if model_name == self._reranker_model:
+            self._cross_encoder = loaded
+        return loaded
+
+    def search(self, question: str, top_k: int) -> list[dict[str, Any]]:
+        requested_top_k = max(1, int(top_k))
+        fetch_k = max(requested_top_k, self._fetch_k)
+
+        vector = self._embedder.encode(
+            [question],
+            normalize_embeddings=self._normalize_embeddings,
+        )[0].tolist()
+
+        resp = self._client.query_points(
+            collection_name=self._collection_name,
+            query=vector,
+            limit=fetch_k,
+            with_payload=True,
+        )
+
+        rows: list[dict[str, Any]] = []
+        for point in resp.points:
+            payload = point.payload or {}
+            qdrant_score = float(point.score or 0.0)
+            rows.append(
+                {
+                    "score": qdrant_score,
+                    "qdrant_score": qdrant_score,
+                    "chunk_id": payload.get("chunk_id"),
+                    "doc_id": payload.get("doc_id"),
+                    "source_ref": payload.get("source_ref"),
+                    "source_type": payload.get("source_type"),
+                    "record_type": payload.get("record_type", "chunk"),
+                    "text": payload.get("text") or "",
+                    "metadata": payload.get("metadata", {}),
+                }
+            )
+
+        return postprocess_retrieval_rows(
+            question=question,
+            rows=rows,
+            embedder=self._embedder,
+            normalize_embeddings=self._normalize_embeddings,
+            top_k=requested_top_k,
+            score_threshold=self._score_threshold,
+            rerank_mode=self._rerank_mode,
+            reranker_model=self._reranker_model,
+            rerank_alpha=self._rerank_alpha,
+            max_per_source=self._max_per_source,
+            qa_pair_score_boost=self._qa_pair_score_boost,
+            cross_encoder=self._cross_encoder,
+        )
+
+
+def resolve_top_k(cfg: dict[str, Any], top_k_override: int = 0) -> int:
+    top_k = int(top_k_override or cfg.get("top_k", 6))
+    if top_k <= 0:
+        raise ValueError("top_k must be > 0")
+    return top_k
+
+
+def build_local_retriever(cfg: dict[str, Any]) -> LocalRetriever:
+    top_k = resolve_top_k(cfg, 0)
+    fetch_k = int(cfg.get("fetch_k", max(top_k * 3, top_k)))
+
+    return LocalRetriever(
+        qdrant_path=str(cfg.get("qdrant_path", "data/rag/vectordb")),
+        collection_name=str(cfg.get("collection_name", "docs")),
+        embedding_model=str(cfg.get("embedding_model", "BAAI/bge-base-en-v1.5")),
+        normalize_embeddings=bool(cfg.get("normalize_embeddings", True)),
+        fetch_k=max(fetch_k, top_k),
+        score_threshold=_as_float(cfg.get("score_threshold", 0.0), 0.0),
+        rerank_mode=str(cfg.get("rerank_mode", "cross_encoder")),
+        reranker_model=str(cfg.get("reranker_model", "BAAI/bge-reranker-base")),
+        rerank_alpha=_as_float(cfg.get("rerank_alpha", 0.65), 0.65),
+        max_per_source=int(cfg.get("max_per_source", 0)),
+        qa_pair_score_boost=_as_float(cfg.get("qa_pair_score_boost", 0.0), 0.0),
+    )
+
+
+def resolve_answer_rerank_resources(
+    *,
+    retriever: LocalRetriever,
+    sample_count: int,
+    rerank_mode: str,
+    reranker_model: str,
+) -> tuple[SentenceTransformer | None, Any | None]:
+    if sample_count <= 1:
+        return None, None
+
+    mode = str(rerank_mode or "none").strip().lower()
+    answer_cross_encoder: Any | None = None
+    answer_embedder: SentenceTransformer | None = None
+
+    if mode == "cross_encoder":
+        answer_cross_encoder = retriever.ensure_cross_encoder(reranker_model)
+        if answer_cross_encoder is None:
+            answer_embedder = retriever.embedder
+    elif mode == "embedding_cosine":
+        answer_embedder = retriever.embedder
+
+    return answer_embedder, answer_cross_encoder
+
+
 def run_retrieval(
     question: str,
     cfg: dict[str, Any],
     top_k_override: int = 0,
 ) -> list[dict[str, Any]]:
-    qdrant_path = str(cfg.get("qdrant_path", "data/rag/vectordb"))
-    collection_name = str(cfg.get("collection_name", "docs"))
-    embedding_model = str(cfg.get("embedding_model", "BAAI/bge-base-en-v1.5"))
-    normalize_embeddings = bool(cfg.get("normalize_embeddings", True))
-
-    top_k = int(top_k_override or cfg.get("top_k", 6))
-    if top_k <= 0:
-        raise ValueError("top_k must be > 0")
-
-    fetch_k = int(cfg.get("fetch_k", max(top_k * 3, top_k)))
-    fetch_k = max(fetch_k, top_k)
-
-    score_threshold = _as_float(cfg.get("score_threshold", 0.0), 0.0)
-    rerank_mode = str(cfg.get("rerank_mode", "cross_encoder"))
-    reranker_model = str(cfg.get("reranker_model", "BAAI/bge-reranker-base"))
-    rerank_alpha = _as_float(cfg.get("rerank_alpha", 0.65), 0.65)
-    max_per_source = int(cfg.get("max_per_source", 0))
-    qa_pair_score_boost = _as_float(cfg.get("qa_pair_score_boost", 0.0), 0.0)
-
-    embedder = SentenceTransformer(embedding_model)
-    vector = embedder.encode([question], normalize_embeddings=normalize_embeddings)[0].tolist()
-
-    client = QdrantClient(path=qdrant_path)
-    resp = client.query_points(
-        collection_name=collection_name,
-        query=vector,
-        limit=fetch_k,
-        with_payload=True,
-    )
-
-    rows: list[dict[str, Any]] = []
-    for point in resp.points:
-        payload = point.payload or {}
-        qdrant_score = _as_float(point.score, 0.0)
-        rows.append(
-            {
-                "score": qdrant_score,
-                "qdrant_score": qdrant_score,
-                "chunk_id": payload.get("chunk_id"),
-                "doc_id": payload.get("doc_id"),
-                "source_ref": payload.get("source_ref"),
-                "source_type": payload.get("source_type"),
-                "record_type": payload.get("record_type", "chunk"),
-                "text": payload.get("text") or "",
-                "metadata": payload.get("metadata", {}),
-            }
-        )
-
-    return postprocess_retrieval_rows(
-        question=question,
-        rows=rows,
-        embedder=embedder,
-        normalize_embeddings=normalize_embeddings,
-        top_k=top_k,
-        score_threshold=score_threshold,
-        rerank_mode=rerank_mode,
-        reranker_model=reranker_model,
-        rerank_alpha=rerank_alpha,
-        max_per_source=max_per_source,
-        qa_pair_score_boost=qa_pair_score_boost,
-    )
+    retriever = build_local_retriever(cfg)
+    return retriever.search(question, resolve_top_k(cfg, top_k_override))
 
 
 def main() -> None:

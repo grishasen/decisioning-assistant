@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 
 from common.io_utils import read_yaml
 from common.logging_utils import get_logger
+from common.webex_utils import parse_webex_datetime
 
 logger = get_logger(__name__)
 
@@ -84,13 +85,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _parse_webex_timestamp(value: Any) -> datetime | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+    return parse_webex_datetime(value)
 
 
 def _format_webex_timestamp(value: datetime) -> str:
