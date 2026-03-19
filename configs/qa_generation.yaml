@@ -3,6 +3,11 @@ output_raw_qa: data/qa/qa_raw.jsonl
 output_clean_qa: data/qa/qa_clean.jsonl
 output_split_dir: data/qa
 
+# Resume QA generation chunk by chunk. Set to false to rebuild from scratch.
+resume_generation: true
+# Tracks processed chunks so resume also skips chunks that produced no QA rows.
+qa_progress_path: data/qa/qa_progress.jsonl
+
 # Generate denser supervision per context chunk.
 qa_per_chunk: 1
 max_chunks: 0  # 0 means all chunks

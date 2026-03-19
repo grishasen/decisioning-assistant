@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 from typing import Any
 
 from tqdm import tqdm
 
-from common.io_utils import iter_jsonl, read_yaml, write_jsonl
+from common.io_utils import append_jsonl, iter_jsonl, read_yaml, repair_jsonl_tail, write_jsonl
 from common.logging_utils import get_logger
 from common.mlx_utils import MLXLoadedGenerator, extract_first_json_object
 from common.prompts import qa_generation_prompt, webex_thread_question_prompt
 from common.schemas import ChunkRecord, QARecord
 from common.text_utils import normalize_whitespace, stable_id
-from common.webex_utils import WebexThreadLine, parse_webex_thread_lines, parse_webex_thread_message_line
+from common.webex_utils import (
+    WebexThreadLine,
+    parse_webex_thread_lines,
+    parse_webex_thread_message_line,
+)
 
 logger = get_logger(__name__)
 
@@ -25,13 +31,100 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_chunks(path: str, limit: int) -> list[ChunkRecord]:
-    chunks: list[ChunkRecord] = []
+def _iter_chunks(path: str, limit: int):
+    count = 0
     for row in iter_jsonl(path):
-        chunks.append(ChunkRecord.model_validate(row))
-        if limit > 0 and len(chunks) >= limit:
+        yield ChunkRecord.model_validate(row)
+        count += 1
+        if limit > 0 and count >= limit:
             break
-    return chunks
+
+
+def _iter_jsonl_rows_safe(path: str):
+    file_path = Path(path).expanduser()
+    if not file_path.exists():
+        return
+
+    with file_path.open("r", encoding="utf-8") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Skipping malformed JSONL line %s in %s while loading resume state.",
+                    line_number,
+                    file_path,
+                )
+
+
+def _load_processed_chunk_ids(output_raw_qa: str, qa_progress_path: str) -> set[str]:
+    processed_from_output: set[str] = set()
+    processed_from_progress: set[str] = set()
+
+    for row in _iter_jsonl_rows_safe(output_raw_qa) or []:
+        chunk_id = row.get("chunk_id")
+        if isinstance(chunk_id, str) and chunk_id.strip():
+            processed_from_output.add(chunk_id.strip())
+
+    for row in _iter_jsonl_rows_safe(qa_progress_path) or []:
+        chunk_id = row.get("chunk_id")
+        if isinstance(chunk_id, str) and chunk_id.strip():
+            processed_from_progress.add(chunk_id.strip())
+
+    if processed_from_output:
+        logger.info(
+            "Recovered %s processed chunks from existing raw QA output.",
+            len(processed_from_output),
+        )
+    if processed_from_progress:
+        logger.info(
+            "Recovered %s processed chunks from QA progress state.",
+            len(processed_from_progress),
+        )
+
+    return processed_from_output | processed_from_progress
+
+
+def _reset_resume_artifacts(output_raw_qa: str, qa_progress_path: str) -> None:
+    for path in (output_raw_qa, qa_progress_path):
+        file_path = Path(path).expanduser()
+        if file_path.exists():
+            file_path.unlink()
+
+
+def _has_pending_chunks(
+    input_chunks: str,
+    limit: int,
+    processed_chunk_ids: set[str],
+) -> bool:
+    for chunk in _iter_chunks(input_chunks, limit):
+        if chunk.chunk_id not in processed_chunk_ids:
+            return True
+    return False
+
+
+def _record_chunk_progress(
+    qa_progress_path: str,
+    chunk: ChunkRecord,
+    status: str,
+    qa_row_count: int,
+) -> None:
+    append_jsonl(
+        qa_progress_path,
+        [
+            {
+                "chunk_id": chunk.chunk_id,
+                "doc_id": chunk.doc_id,
+                "source_ref": chunk.source_ref,
+                "source_type": chunk.source_type,
+                "status": status,
+                "qa_row_count": int(qa_row_count),
+            }
+        ],
+    )
 
 
 def _extract_qa_pairs(model_output: str) -> list[dict[str, str]]:
@@ -204,6 +297,10 @@ def main() -> None:
 
     input_chunks = str(qa_cfg.get("input_chunks", "data/staging/chunks/chunks.jsonl"))
     output_raw_qa = str(qa_cfg.get("output_raw_qa", "data/qa/qa_raw.jsonl"))
+    qa_progress_path = str(
+        qa_cfg.get("qa_progress_path", f"{output_raw_qa}.progress.jsonl")
+    )
+    resume_generation = bool(qa_cfg.get("resume_generation", True))
     qa_per_chunk = int(qa_cfg.get("qa_per_chunk", 2))
     max_chunks = int(qa_cfg.get("max_chunks", 0))
 
@@ -229,10 +326,61 @@ def main() -> None:
     max_tokens = int(qa_model_cfg.get("max_tokens", 320))
     temperature = float(qa_model_cfg.get("temperature", 0.2))
 
-    chunks = _load_chunks(input_chunks, max_chunks)
-    if not chunks:
-        logger.warning("No chunks available at %s", input_chunks)
+    input_chunks_path = Path(input_chunks).expanduser()
+    output_raw_qa_path = Path(output_raw_qa).expanduser()
+    qa_progress_file_path = Path(qa_progress_path).expanduser()
+    if not input_chunks_path.exists():
+        logger.warning("Input chunks file not found: %s", input_chunks)
+        if not output_raw_qa_path.exists():
+            write_jsonl(output_raw_qa, [])
+        return
+
+    if resume_generation:
+        if output_raw_qa_path.exists() or qa_progress_file_path.exists():
+            logger.info(
+                "Resuming QA generation from prior progress. raw_qa=%s progress=%s",
+                output_raw_qa,
+                qa_progress_path,
+            )
+        else:
+            logger.info(
+                "Resume is enabled but no prior QA progress files were found. Starting the first pass."
+            )
+        repaired_raw_rows = repair_jsonl_tail(output_raw_qa)
+        repaired_progress_rows = repair_jsonl_tail(qa_progress_path)
+        if repaired_raw_rows > 0:
+            logger.warning(
+                "Recovered raw QA output by truncating %s malformed trailing rows from %s.",
+                repaired_raw_rows,
+                output_raw_qa,
+            )
+        if repaired_progress_rows > 0:
+            logger.warning(
+                "Recovered QA progress state by truncating %s malformed trailing rows from %s.",
+                repaired_progress_rows,
+                qa_progress_path,
+            )
+        processed_chunk_ids = _load_processed_chunk_ids(output_raw_qa, qa_progress_path)
+    else:
+        logger.info("Resume disabled. Starting QA generation from scratch.")
+        _reset_resume_artifacts(output_raw_qa, qa_progress_path)
         write_jsonl(output_raw_qa, [])
+        processed_chunk_ids = set()
+
+    if processed_chunk_ids:
+        logger.info(
+            "Resume is enabled. %s chunks are already marked as processed and will be skipped.",
+            len(processed_chunk_ids),
+        )
+
+    if resume_generation and not _has_pending_chunks(
+        input_chunks,
+        max_chunks,
+        processed_chunk_ids,
+    ):
+        if not output_raw_qa_path.exists():
+            write_jsonl(output_raw_qa, [])
+        logger.info("No pending chunks left to process. Raw QA output is already up to date.")
         return
 
     if normalized_webex_user_name:
@@ -248,113 +396,161 @@ def main() -> None:
         trust_remote_code=trust_remote_code,
     )
 
-    rows: list[dict[str, Any]] = []
+    resumed_skipped_chunks = 0
+    processed_this_run = 0
+    written_rows_this_run = 0
     skipped_short_webex_chunks = 0
     skipped_webex_user_filter_chunks = 0
     skipped_webex_thread_without_answer = 0
     generated_webex_thread_qas = 0
-    for chunk in tqdm(chunks, desc="Generating QA"):
+
+    for chunk in tqdm(
+        _iter_chunks(input_chunks, max_chunks),
+        desc="Generating QA",
+        unit="chunk",
+    ):
+        if chunk.chunk_id in processed_chunk_ids:
+            resumed_skipped_chunks += 1
+            continue
+
         chunk_text = chunk.text.strip()
+        chunk_rows: list[dict[str, Any]] = []
+        chunk_status = "completed"
+
         if _is_webex_chunk(chunk) and len(chunk_text) < min_webex_chunk_chars:
             skipped_short_webex_chunks += 1
+            chunk_status = "skipped_short_webex"
             logger.debug(
                 "Skipping webex chunk %s because %s chars < min_webex_chunk_chars=%s",
                 chunk.chunk_id,
                 len(chunk_text),
                 min_webex_chunk_chars,
             )
-            continue
-
-        if (
+        elif (
             _is_webex_chunk(chunk)
             and normalized_webex_user_name
             and not _webex_chunk_matches_user(chunk, normalized_webex_user_name)
         ):
             skipped_webex_user_filter_chunks += 1
+            chunk_status = "skipped_webex_user_filter"
             logger.debug(
                 "Skipping webex chunk %s because user '%s' was not found in child messages.",
                 chunk.chunk_id,
                 webex_user_name,
             )
-            continue
-
-        try:
-            if _is_webex_thread_chunk(chunk):
-                webex_pair = _generate_webex_thread_question(
-                    generator=generator,
-                    chunk=chunk,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    normalized_user_name=normalized_webex_user_name,
-                )
-                if not webex_pair:
-                    skipped_webex_thread_without_answer += 1
-                    logger.debug(
-                        "Skipping webex thread chunk %s because no eligible child-message answer could be built.",
-                        chunk.chunk_id,
+        else:
+            try:
+                if _is_webex_thread_chunk(chunk):
+                    webex_pair = _generate_webex_thread_question(
+                        generator=generator,
+                        chunk=chunk,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        normalized_user_name=normalized_webex_user_name,
                     )
-                    continue
-                qa_pairs = [webex_pair]
-                generated_webex_thread_qas += 1
+                    if not webex_pair:
+                        skipped_webex_thread_without_answer += 1
+                        chunk_status = "skipped_webex_thread_without_answer"
+                        logger.debug(
+                            "Skipping webex thread chunk %s because no eligible child-message answer could be built.",
+                            chunk.chunk_id,
+                        )
+                        _record_chunk_progress(
+                            qa_progress_path,
+                            chunk,
+                            chunk_status,
+                            qa_row_count=0,
+                        )
+                        processed_chunk_ids.add(chunk.chunk_id)
+                        processed_this_run += 1
+                        continue
+                    qa_pairs = [webex_pair]
+                else:
+                    prompt = qa_generation_prompt(chunk_text, qa_per_chunk)
+                    model_output = generator.generate(
+                        prompt=prompt,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    )
+                    qa_pairs = _extract_qa_pairs(model_output)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Generation failed for chunk %s: %s", chunk.chunk_id, exc)
+                continue
+
+            if not qa_pairs:
+                logger.debug("No valid QA parsed for chunk %s", chunk.chunk_id)
+                chunk_status = "no_valid_qa"
             else:
-                prompt = qa_generation_prompt(chunk_text, qa_per_chunk)
-                model_output = generator.generate(
-                    prompt=prompt,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
-                qa_pairs = _extract_qa_pairs(model_output)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Generation failed for chunk %s: %s", chunk.chunk_id, exc)
-            continue
+                for idx, pair in enumerate(qa_pairs):
+                    question = pair["question"]
+                    answer = pair["answer"]
+                    if len(question) < min_question_chars:
+                        continue
 
-        if not qa_pairs:
-            logger.debug("No valid QA parsed for chunk %s", chunk.chunk_id)
-            continue
+                    allowed_max_answer_chars = max_answer_chars
+                    if _is_webex_thread_chunk(chunk):
+                        allowed_max_answer_chars = max_webex_thread_answer_chars
 
-        for idx, pair in enumerate(qa_pairs):
-            question = pair["question"]
-            answer = pair["answer"]
-            if len(question) < min_question_chars:
-                continue
+                    if len(answer) < min_answer_chars or (
+                        allowed_max_answer_chars > 0 and len(answer) > allowed_max_answer_chars
+                    ):
+                        continue
 
-            allowed_max_answer_chars = max_answer_chars
-            if _is_webex_thread_chunk(chunk):
-                allowed_max_answer_chars = max_webex_thread_answer_chars
-
-            if len(answer) < min_answer_chars or (
-                allowed_max_answer_chars > 0 and len(answer) > allowed_max_answer_chars
-            ):
-                continue
-
-            qa_id = stable_id(chunk.chunk_id, str(idx), question)
-            row_metadata = {
-                "chunk_text": chunk_text,
-                "chunk_metadata": chunk.metadata,
-            }
-            if _is_webex_thread_chunk(chunk):
-                row_metadata.update(
-                    {
-                        "qa_generation_mode": "webex_thread_question_child_messages_answer",
-                        "thread_start_text": str(
-                            chunk.metadata.get("thread_start_text") or ""
-                        ).strip(),
-                        "thread_reply_count": int(pair.get("reply_count") or 0),
-                        "thread_reply_user_filter": webex_user_name,
+                    qa_id = stable_id(chunk.chunk_id, str(idx), question)
+                    row_metadata = {
+                        "chunk_text": chunk_text,
+                        "chunk_metadata": chunk.metadata,
                     }
-                )
+                    if _is_webex_thread_chunk(chunk):
+                        row_metadata.update(
+                            {
+                                "qa_generation_mode": "webex_thread_question_child_messages_answer",
+                                "thread_start_text": str(
+                                    chunk.metadata.get("thread_start_text") or ""
+                                ).strip(),
+                                "thread_reply_count": int(pair.get("reply_count") or 0),
+                                "thread_reply_user_filter": webex_user_name,
+                            }
+                        )
 
-            row = QARecord(
-                qa_id=qa_id,
-                question=question,
-                answer=answer,
-                chunk_id=chunk.chunk_id,
-                doc_id=chunk.doc_id,
-                source_ref=chunk.source_ref,
-                source_type=chunk.source_type,
-                metadata=row_metadata,
-            ).model_dump(mode="json")
-            rows.append(row)
+                    row = QARecord(
+                        qa_id=qa_id,
+                        question=question,
+                        answer=answer,
+                        chunk_id=chunk.chunk_id,
+                        doc_id=chunk.doc_id,
+                        source_ref=chunk.source_ref,
+                        source_type=chunk.source_type,
+                        metadata=row_metadata,
+                    ).model_dump(mode="json")
+                    chunk_rows.append(row)
+
+                if not chunk_rows:
+                    chunk_status = "filtered_after_validation"
+
+        if chunk_rows:
+            appended = append_jsonl(output_raw_qa, chunk_rows)
+            written_rows_this_run += appended
+            if _is_webex_thread_chunk(chunk):
+                generated_webex_thread_qas += appended
+
+        _record_chunk_progress(
+            qa_progress_path,
+            chunk,
+            chunk_status,
+            qa_row_count=len(chunk_rows),
+        )
+        processed_chunk_ids.add(chunk.chunk_id)
+        processed_this_run += 1
+
+    if not output_raw_qa_path.exists():
+        write_jsonl(output_raw_qa, [])
+
+    if resumed_skipped_chunks > 0:
+        logger.info(
+            "Skipped %s chunks because they were already processed in an earlier run.",
+            resumed_skipped_chunks,
+        )
 
     if skipped_short_webex_chunks > 0:
         logger.info(
@@ -382,8 +578,13 @@ def main() -> None:
             generated_webex_thread_qas,
         )
 
-    count = write_jsonl(output_raw_qa, rows)
-    logger.info("Wrote %s raw QA rows to %s", count, output_raw_qa)
+    logger.info(
+        "QA generation complete. Processed %s chunks in this run, appended %s raw QA rows to %s, and updated resume state in %s.",
+        processed_this_run,
+        written_rows_this_run,
+        output_raw_qa,
+        qa_progress_path,
+    )
 
 
 if __name__ == "__main__":
