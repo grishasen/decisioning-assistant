@@ -39,6 +39,14 @@ def iter_jsonl(path: str | Path) -> Iterable[dict[str, Any]]:
                 continue
             yield json.loads(line)
 
+def count_iter_jsonl(path: str | Path) -> int:
+    count = 0
+    with Path(path).expanduser().open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            if raw_line.strip():
+                count += 1
+    return count
+
 
 def write_jsonl(path: str | Path, rows: Iterable[dict[str, Any]]) -> int:
     ensure_parent_dir(path)

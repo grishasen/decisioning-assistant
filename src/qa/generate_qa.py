@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from tqdm import tqdm
 
-from common.io_utils import append_jsonl, iter_jsonl, read_yaml, repair_jsonl_tail, write_jsonl
+from common.io_utils import append_jsonl, iter_jsonl, read_yaml, repair_jsonl_tail, write_jsonl, count_iter_jsonl
 from common.logging_utils import get_logger
 from common.mlx_utils import MLXLoadedGenerator, extract_first_json_object
 from common.prompts import qa_generation_prompt, webex_thread_question_prompt
@@ -31,13 +31,31 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _iter_chunks(path: str, limit: int):
-    count = 0
-    for row in iter_jsonl(path):
-        yield ChunkRecord.model_validate(row)
-        count += 1
-        if limit > 0 and count >= limit:
-            break
+class _ChunkIterator:
+    def __init__(self, path: str, limit: int):
+        self.path = path
+        self.limit = limit
+        self._length: int | None = None
+
+    def __iter__(self) -> Iterator[ChunkRecord]:
+        count = 0
+        for row in iter_jsonl(self.path):
+            yield ChunkRecord.model_validate(row)
+            count += 1
+            if self.limit > 0 and count >= self.limit:
+                break
+
+    def __len__(self) -> int:
+        if self._length is None:
+            total = count_iter_jsonl(self.path)
+            if self.limit > 0:
+                total = min(total, self.limit)
+            self._length = total
+        return self._length
+
+
+def _iter_chunks(path: str, limit: int) -> _ChunkIterator:
+    return _ChunkIterator(path, limit)
 
 
 def _iter_jsonl_rows_safe(path: str):
@@ -96,9 +114,9 @@ def _reset_resume_artifacts(output_raw_qa: str, qa_progress_path: str) -> None:
 
 
 def _has_pending_chunks(
-    input_chunks: str,
-    limit: int,
-    processed_chunk_ids: set[str],
+        input_chunks: str,
+        limit: int,
+        processed_chunk_ids: set[str],
 ) -> bool:
     for chunk in _iter_chunks(input_chunks, limit):
         if chunk.chunk_id not in processed_chunk_ids:
@@ -107,10 +125,10 @@ def _has_pending_chunks(
 
 
 def _record_chunk_progress(
-    qa_progress_path: str,
-    chunk: ChunkRecord,
-    status: str,
-    qa_row_count: int,
+        qa_progress_path: str,
+        chunk: ChunkRecord,
+        status: str,
+        qa_row_count: int,
 ) -> None:
     append_jsonl(
         qa_progress_path,
@@ -227,8 +245,8 @@ def _webex_chunk_matches_user(chunk: ChunkRecord, normalized_user_name: str) -> 
 
 
 def _build_webex_thread_answer(
-    chunk: ChunkRecord,
-    normalized_user_name: str = "",
+        chunk: ChunkRecord,
+        normalized_user_name: str = "",
 ) -> tuple[str, str, int] | None:
     metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
     thread_start_text = normalize_whitespace(str(metadata.get("thread_start_text") or ""))
@@ -259,11 +277,11 @@ def _build_webex_thread_answer(
 
 
 def _generate_webex_thread_question(
-    generator: MLXLoadedGenerator,
-    chunk: ChunkRecord,
-    max_tokens: int,
-    temperature: float,
-    normalized_user_name: str = "",
+        generator: MLXLoadedGenerator,
+        chunk: ChunkRecord,
+        max_tokens: int,
+        temperature: float,
+        normalized_user_name: str = "",
 ) -> dict[str, str] | None:
     thread_parts = _build_webex_thread_answer(
         chunk,
@@ -374,9 +392,9 @@ def main() -> None:
         )
 
     if resume_generation and not _has_pending_chunks(
-        input_chunks,
-        max_chunks,
-        processed_chunk_ids,
+            input_chunks,
+            max_chunks,
+            processed_chunk_ids,
     ):
         if not output_raw_qa_path.exists():
             write_jsonl(output_raw_qa, [])
@@ -404,10 +422,12 @@ def main() -> None:
     skipped_webex_thread_without_answer = 0
     generated_webex_thread_qas = 0
 
+    chunks = _iter_chunks(input_chunks, max_chunks)
     for chunk in tqdm(
-        _iter_chunks(input_chunks, max_chunks),
-        desc="Generating QA",
-        unit="chunk",
+            chunks,
+            desc="Generating QA",
+            unit="chunk",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]"
     ):
         if chunk.chunk_id in processed_chunk_ids:
             resumed_skipped_chunks += 1
@@ -427,9 +447,9 @@ def main() -> None:
                 min_webex_chunk_chars,
             )
         elif (
-            _is_webex_chunk(chunk)
-            and normalized_webex_user_name
-            and not _webex_chunk_matches_user(chunk, normalized_webex_user_name)
+                _is_webex_chunk(chunk)
+                and normalized_webex_user_name
+                and not _webex_chunk_matches_user(chunk, normalized_webex_user_name)
         ):
             skipped_webex_user_filter_chunks += 1
             chunk_status = "skipped_webex_user_filter"
@@ -492,7 +512,7 @@ def main() -> None:
                         allowed_max_answer_chars = max_webex_thread_answer_chars
 
                     if len(answer) < min_answer_chars or (
-                        allowed_max_answer_chars > 0 and len(answer) > allowed_max_answer_chars
+                            allowed_max_answer_chars > 0 and len(answer) > allowed_max_answer_chars
                     ):
                         continue
 
