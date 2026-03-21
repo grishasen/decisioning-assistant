@@ -7,7 +7,7 @@
 # - chunks from source documents
 # - synthetic QA pairs generated from those chunks
 chunks_path: data/staging/chunks/chunks.jsonl
-include_qa: false
+include_qa: true
 qa_path: data/qa/qa_clean.jsonl
 # question_answer | question_only | answer_only
 qa_text_mode: question_answer
@@ -37,6 +37,21 @@ rerank_alpha: 0.65
 qa_pair_score_boost: 0.03
 # 0 disables per-source cap
 max_per_source: 3
+
+# Query-time recency bonus for Webex content only.
+# This is additive, so it nudges newer Webex threads/messages upward without overriding semantic relevance.
+webex_recency_enabled: true
+# Prefer updated_at for threads; falls back to created_at and ingested_at automatically.
+webex_recency_field: created_at
+# Mild default weighting for general Webex questions.
+webex_recency_half_life_days: 90
+webex_recency_max_bonus: 0.04
+# Apply recency bonus to Webex-derived QA records as well as raw chunks.
+webex_recency_apply_to_qa_pairs: true
+# If the question asks for recent/current/latest info, use the stronger settings below.
+webex_recency_query_adaptive: true
+webex_recency_recent_half_life_days: 30
+webex_recency_recent_max_bonus: 0.10
 
 # Answer selection after RAG context is built.
 # Generate multiple answers, then rerank them against the question + retrieved context.

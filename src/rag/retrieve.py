@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+from datetime import datetime, timezone
 from typing import Any
 
 from qdrant_client import QdrantClient
@@ -9,6 +11,7 @@ from sentence_transformers import SentenceTransformer
 
 from common.io_utils import read_yaml
 from common.vector_utils import dot_score
+from common.webex_utils import parse_webex_datetime
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,9 +29,122 @@ def _as_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _source_bucket(row: dict[str, Any]) -> str:
+_WEBEX_RECENCY_HINT_TERMS = (
+    "latest",
+    "recent",
+    "recently",
+    "current",
+    "updated",
+    "today",
+    "yesterday",
+    "this week",
+    "this month",
+    "last week",
+    "last month",
+)
+
+
+def _metadata_dict(row: dict[str, Any]) -> dict[str, Any]:
     metadata_raw = row.get("metadata")
-    metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+    return metadata_raw if isinstance(metadata_raw, dict) else {}
+
+
+def _row_source_type(row: dict[str, Any]) -> str:
+    source_type = str(row.get("source_type") or "").strip().lower()
+    if source_type:
+        return source_type
+
+    metadata = _metadata_dict(row)
+    meta_source = str(metadata.get("source_type") or "").strip().lower()
+    if meta_source:
+        return meta_source
+
+    source_ref = str(row.get("source_ref") or "").strip().lower()
+    if source_ref.startswith("webex::"):
+        return "webex"
+    if source_ref.startswith("pdf::"):
+        return "pdf"
+    return ""
+
+
+def _question_prefers_recent_content(question: str) -> bool:
+    normalized = " ".join(str(question or "").lower().split())
+    if not normalized:
+        return False
+    return any(term in normalized for term in _WEBEX_RECENCY_HINT_TERMS)
+
+
+def _webex_timestamp(
+    row: dict[str, Any],
+    preferred_field: str,
+) -> tuple[datetime | None, str]:
+    metadata = _metadata_dict(row)
+    fields = [preferred_field] + [
+        field for field in ("updated_at", "created_at", "ingested_at") if field != preferred_field
+    ]
+
+    for field in fields:
+        value = metadata.get(field)
+        parsed: datetime | None
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            parsed = parse_webex_datetime(value)
+        if parsed is None:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed, field
+
+    return None, ""
+
+
+def _webex_recency_bonus(
+    question: str,
+    row: dict[str, Any],
+    *,
+    enabled: bool,
+    preferred_field: str,
+    half_life_days: float,
+    max_bonus: float,
+    apply_to_qa_pairs: bool,
+    query_adaptive: bool,
+    recent_half_life_days: float,
+    recent_max_bonus: float,
+    now_utc: datetime | None = None,
+) -> tuple[float, float, float, str]:
+    if not enabled or _row_source_type(row) != "webex":
+        return 0.0, 0.0, 0.0, ""
+
+    if not apply_to_qa_pairs and str(row.get("record_type") or "").strip().lower() == "qa_pair":
+        return 0.0, 0.0, 0.0, ""
+
+    timestamp, timestamp_field = _webex_timestamp(row, preferred_field)
+    if timestamp is None:
+        return 0.0, 0.0, 0.0, ""
+
+    effective_half_life = max(0.1, float(half_life_days))
+    effective_max_bonus = max(0.0, float(max_bonus))
+
+    if query_adaptive and _question_prefers_recent_content(question):
+        if float(recent_half_life_days) > 0:
+            effective_half_life = max(0.1, float(recent_half_life_days))
+        if float(recent_max_bonus) > 0:
+            effective_max_bonus = max(0.0, float(recent_max_bonus))
+
+    if effective_max_bonus <= 0.0:
+        return 0.0, 0.0, 0.0, timestamp_field
+
+    current_time = now_utc or datetime.now(timezone.utc)
+    age_days = max(0.0, (current_time - timestamp).total_seconds() / 86400.0)
+    recency_score = math.exp(-math.log(2.0) * age_days / effective_half_life)
+    return recency_score, effective_max_bonus * recency_score, age_days, timestamp_field
+
+
+def _source_bucket(row: dict[str, Any]) -> str:
+    metadata = _metadata_dict(row)
 
     room_id = str(metadata.get("room_id") or "").strip()
     thread_id = str(metadata.get("thread_id") or "").strip()
@@ -167,6 +283,14 @@ def postprocess_retrieval_rows(
     max_per_source: int = 0,
     qa_pair_score_boost: float = 0.0,
     cross_encoder: Any | None = None,
+    webex_recency_enabled: bool = False,
+    webex_recency_field: str = "updated_at",
+    webex_recency_half_life_days: float = 45.0,
+    webex_recency_max_bonus: float = 0.0,
+    webex_recency_apply_to_qa_pairs: bool = True,
+    webex_recency_query_adaptive: bool = True,
+    webex_recency_recent_half_life_days: float = 14.0,
+    webex_recency_recent_max_bonus: float = 0.0,
 ) -> list[dict[str, Any]]:
     if top_k <= 0:
         return []
@@ -231,8 +355,27 @@ def postprocess_retrieval_rows(
         if str(row.get("record_type") or "").lower() == "qa_pair":
             final_score += _as_float(qa_pair_score_boost, 0.0)
 
+        recency_score, recency_bonus, recency_age_days, recency_field = _webex_recency_bonus(
+            question,
+            row,
+            enabled=webex_recency_enabled,
+            preferred_field=webex_recency_field,
+            half_life_days=webex_recency_half_life_days,
+            max_bonus=webex_recency_max_bonus,
+            apply_to_qa_pairs=webex_recency_apply_to_qa_pairs,
+            query_adaptive=webex_recency_query_adaptive,
+            recent_half_life_days=webex_recency_recent_half_life_days,
+            recent_max_bonus=webex_recency_recent_max_bonus,
+        )
+        final_score += recency_bonus
+
         row["rerank_score"] = float(rerank_score)
         row["score"] = float(final_score)
+        if recency_field:
+            row["recency_field"] = recency_field
+            row["recency_score"] = float(recency_score)
+            row["recency_bonus"] = float(recency_bonus)
+            row["recency_age_days"] = float(recency_age_days)
         scored.append(row)
 
     scored.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
@@ -253,6 +396,14 @@ class LocalRetriever:
         rerank_alpha: float,
         max_per_source: int,
         qa_pair_score_boost: float,
+        webex_recency_enabled: bool,
+        webex_recency_field: str,
+        webex_recency_half_life_days: float,
+        webex_recency_max_bonus: float,
+        webex_recency_apply_to_qa_pairs: bool,
+        webex_recency_query_adaptive: bool,
+        webex_recency_recent_half_life_days: float,
+        webex_recency_recent_max_bonus: float,
     ) -> None:
         self._collection_name = collection_name
         self._normalize_embeddings = normalize_embeddings
@@ -266,6 +417,14 @@ class LocalRetriever:
         self._rerank_alpha = max(0.0, min(1.0, float(rerank_alpha)))
         self._max_per_source = max(0, int(max_per_source))
         self._qa_pair_score_boost = float(qa_pair_score_boost)
+        self._webex_recency_enabled = bool(webex_recency_enabled)
+        self._webex_recency_field = str(webex_recency_field or "updated_at").strip() or "updated_at"
+        self._webex_recency_half_life_days = max(0.1, float(webex_recency_half_life_days))
+        self._webex_recency_max_bonus = max(0.0, float(webex_recency_max_bonus))
+        self._webex_recency_apply_to_qa_pairs = bool(webex_recency_apply_to_qa_pairs)
+        self._webex_recency_query_adaptive = bool(webex_recency_query_adaptive)
+        self._webex_recency_recent_half_life_days = max(0.1, float(webex_recency_recent_half_life_days))
+        self._webex_recency_recent_max_bonus = max(0.0, float(webex_recency_recent_max_bonus))
 
         self._cross_encoder: Any | None = None
         if self._rerank_mode == "cross_encoder":
@@ -353,6 +512,14 @@ class LocalRetriever:
             max_per_source=self._max_per_source,
             qa_pair_score_boost=self._qa_pair_score_boost,
             cross_encoder=self._cross_encoder,
+            webex_recency_enabled=self._webex_recency_enabled,
+            webex_recency_field=self._webex_recency_field,
+            webex_recency_half_life_days=self._webex_recency_half_life_days,
+            webex_recency_max_bonus=self._webex_recency_max_bonus,
+            webex_recency_apply_to_qa_pairs=self._webex_recency_apply_to_qa_pairs,
+            webex_recency_query_adaptive=self._webex_recency_query_adaptive,
+            webex_recency_recent_half_life_days=self._webex_recency_recent_half_life_days,
+            webex_recency_recent_max_bonus=self._webex_recency_recent_max_bonus,
         )
 
 
@@ -379,6 +546,20 @@ def build_local_retriever(cfg: dict[str, Any]) -> LocalRetriever:
         rerank_alpha=_as_float(cfg.get("rerank_alpha", 0.65), 0.65),
         max_per_source=int(cfg.get("max_per_source", 0)),
         qa_pair_score_boost=_as_float(cfg.get("qa_pair_score_boost", 0.0), 0.0),
+        webex_recency_enabled=bool(cfg.get("webex_recency_enabled", True)),
+        webex_recency_field=str(cfg.get("webex_recency_field", "updated_at")),
+        webex_recency_half_life_days=_as_float(cfg.get("webex_recency_half_life_days", 45.0), 45.0),
+        webex_recency_max_bonus=_as_float(cfg.get("webex_recency_max_bonus", 0.04), 0.04),
+        webex_recency_apply_to_qa_pairs=bool(cfg.get("webex_recency_apply_to_qa_pairs", True)),
+        webex_recency_query_adaptive=bool(cfg.get("webex_recency_query_adaptive", True)),
+        webex_recency_recent_half_life_days=_as_float(
+            cfg.get("webex_recency_recent_half_life_days", 14.0),
+            14.0,
+        ),
+        webex_recency_recent_max_bonus=_as_float(
+            cfg.get("webex_recency_recent_max_bonus", 0.1),
+            0.1,
+        ),
     )
 
 

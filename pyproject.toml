@@ -13,12 +13,12 @@ dependencies = [
   "pyyaml>=6.0",
   "numpy>=1.26",
   "tqdm>=4.66",
-  "pymupdf>=1.24",
-  "qdrant-client>=1.9",
-  "sentence-transformers>=2.7",
-  "mlx-lm>=0.18",
+  "pymupdf>=1.27.2.2",
+  "qdrant-client>=1.17.1",
+  "sentence-transformers>=5.3.0",
+  "mlx-lm>=0.31.1",
   "python-dotenv>=1.0",
-  "streamlit>=1.39",
+  "streamlit>=1.55.0",
 ]
 
 

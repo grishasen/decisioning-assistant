@@ -37,6 +37,14 @@ class RetrievalConfig:
     rerank_alpha: float
     max_per_source: int
     qa_pair_score_boost: float
+    webex_recency_enabled: bool
+    webex_recency_field: str
+    webex_recency_half_life_days: float
+    webex_recency_max_bonus: float
+    webex_recency_apply_to_qa_pairs: bool
+    webex_recency_query_adaptive: bool
+    webex_recency_recent_half_life_days: float
+    webex_recency_recent_max_bonus: float
 
 
 @dataclass(frozen=True)
@@ -62,6 +70,14 @@ def _load_retriever(cfg: RetrievalConfig) -> LocalRetriever:
         rerank_alpha=cfg.rerank_alpha,
         max_per_source=cfg.max_per_source,
         qa_pair_score_boost=cfg.qa_pair_score_boost,
+        webex_recency_enabled=cfg.webex_recency_enabled,
+        webex_recency_field=cfg.webex_recency_field,
+        webex_recency_half_life_days=cfg.webex_recency_half_life_days,
+        webex_recency_max_bonus=cfg.webex_recency_max_bonus,
+        webex_recency_apply_to_qa_pairs=cfg.webex_recency_apply_to_qa_pairs,
+        webex_recency_query_adaptive=cfg.webex_recency_query_adaptive,
+        webex_recency_recent_half_life_days=cfg.webex_recency_recent_half_life_days,
+        webex_recency_recent_max_bonus=cfg.webex_recency_recent_max_bonus,
     )
 
 
@@ -616,6 +632,13 @@ def main() -> None:
             f"qa_boost={qa_pair_score_boost:.2f}"
         )
         st.caption(
+            "Webex recency: "
+            f"enabled={bool(rag_cfg.get('webex_recency_enabled', True))}, "
+            f"field={str(rag_cfg.get('webex_recency_field', 'updated_at'))}, "
+            f"half_life={float(rag_cfg.get('webex_recency_half_life_days', 45.0)):.1f}d, "
+            f"recent_half_life={float(rag_cfg.get('webex_recency_recent_half_life_days', 14.0)):.1f}d"
+        )
+        st.caption(
             "Answers: "
             f"candidates={answer_sample_count}, mode={answer_rerank_mode}, "
             f"alpha={answer_rerank_alpha:.2f}, support_top_k={answer_rerank_support_top_k}"
@@ -643,6 +666,18 @@ def main() -> None:
         rerank_alpha=rerank_alpha,
         max_per_source=max_per_source,
         qa_pair_score_boost=qa_pair_score_boost,
+        webex_recency_enabled=bool(rag_cfg.get("webex_recency_enabled", True)),
+        webex_recency_field=str(rag_cfg.get("webex_recency_field", "updated_at")),
+        webex_recency_half_life_days=float(rag_cfg.get("webex_recency_half_life_days", 45.0)),
+        webex_recency_max_bonus=float(rag_cfg.get("webex_recency_max_bonus", 0.04)),
+        webex_recency_apply_to_qa_pairs=bool(rag_cfg.get("webex_recency_apply_to_qa_pairs", True)),
+        webex_recency_query_adaptive=bool(rag_cfg.get("webex_recency_query_adaptive", True)),
+        webex_recency_recent_half_life_days=float(
+            rag_cfg.get("webex_recency_recent_half_life_days", 14.0)
+        ),
+        webex_recency_recent_max_bonus=float(
+            rag_cfg.get("webex_recency_recent_max_bonus", 0.1)
+        ),
     )
     answer_sel_cfg = AnswerSelectionConfig(
         sample_count=answer_sample_count,
