@@ -22,3 +22,4 @@ __pycache__/
 /src/DecisioningAssistant.egg-info/
 /src/DecisioningAssistant.egg-info/**
 /src/DecisioningAssistant.egg-info/
+/build/

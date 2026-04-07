@@ -18,6 +18,10 @@ _WORD_RE = re.compile(r"[a-zA-Z0-9']+")
 
 
 def parse_args() -> argparse.Namespace:
+    """Signature: def parse_args() -> argparse.Namespace.
+
+    Parse CLI arguments for evaluate model.
+    """
     parser = argparse.ArgumentParser(description="Quick lexical evaluation on QA test split.")
     parser.add_argument("--models-config", default="configs/models.yaml")
     parser.add_argument("--test-path", default="data/qa/test.jsonl")
@@ -27,10 +31,18 @@ def parse_args() -> argparse.Namespace:
 
 
 def _tokens(text: str) -> list[str]:
+    """Signature: def _tokens(text: str) -> list[str].
+
+    Handle tokens.
+    """
     return [w.lower() for w in _WORD_RE.findall(text)]
 
 
 def token_f1(pred: str, gold: str) -> float:
+    """Signature: def token_f1(pred: str, gold: str) -> float.
+
+    Token f1.
+    """
     pred_tokens = _tokens(pred)
     gold_tokens = _tokens(gold)
     if not pred_tokens or not gold_tokens:
@@ -54,6 +66,10 @@ def token_f1(pred: str, gold: str) -> float:
 
 
 def main() -> None:
+    """Signature: def main() -> None.
+
+    Run the evaluate model entrypoint.
+    """
     args = parse_args()
     models_cfg = read_yaml(args.models_config)
     answer_cfg: dict[str, Any] = models_cfg.get("answer_model", {})

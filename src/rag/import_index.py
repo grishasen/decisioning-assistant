@@ -23,6 +23,10 @@ _DISTANCE_MAP = {
 
 
 def parse_args() -> argparse.Namespace:
+    """Signature: def parse_args() -> argparse.Namespace.
+
+    Parse CLI arguments for import index.
+    """
     parser = argparse.ArgumentParser(
         description="Import portable Qdrant RAG bundle into local Qdrant collection."
     )
@@ -57,6 +61,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def _distance_from_value(raw: Any) -> Distance:
+    """Signature: def _distance_from_value(raw: Any) -> Distance.
+
+    Distance from value.
+    """
     text = str(raw or "").strip().lower()
     mapped = _DISTANCE_MAP.get(text)
     if mapped:
@@ -71,6 +79,10 @@ def _distance_from_value(raw: Any) -> Distance:
 
 
 def _build_vectors_config(spec: dict[str, Any]) -> Any:
+    """Signature: def _build_vectors_config(spec: dict[str, Any]) -> Any.
+
+    Build vectors config.
+    """
     kind = str(spec.get("kind", "single")).strip().lower()
 
     if kind == "single":
@@ -97,6 +109,10 @@ def _build_vectors_config(spec: dict[str, Any]) -> Any:
 
 
 def main() -> None:
+    """Signature: def main() -> None.
+
+    Run the import index entrypoint.
+    """
     args = parse_args()
     cfg = read_yaml(args.config)
 

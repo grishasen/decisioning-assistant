@@ -12,6 +12,10 @@ def run_mlx_generate(
     temperature: float = 0.2,
     adapter_path: str | None = None,
 ) -> str:
+    """Signature: def run_mlx_generate(model: str, prompt: str, max_tokens: int = 512, temperature: float = 0.2, adapter_path: str | None = None) -> str.
+
+    Run mlx_lm.generate in a subprocess and return its text output.
+    """
     cmd = [
         "mlx_lm.generate",
         "--model",
@@ -42,6 +46,10 @@ class MLXLoadedGenerator:
         adapter_path: str | None = None,
         trust_remote_code: bool = True,
     ) -> None:
+        """Signature: def __init__(self, model: str, adapter_path: str | None = None, trust_remote_code: bool = True) -> None.
+
+        Load the MLX model, tokenizer, and sampler once for repeated generation.
+        """
         try:
             from mlx_lm import generate, load
             from mlx_lm.sample_utils import make_sampler
@@ -63,6 +71,10 @@ class MLXLoadedGenerator:
         )
 
     def _prepare_prompt(self, prompt: str) -> str:
+        """Signature: def _prepare_prompt(self, prompt: str) -> str.
+
+        Apply the tokenizer chat template when the loaded model expects one.
+        """
         if not getattr(self._tokenizer, "has_chat_template", False):
             return prompt
 
@@ -78,6 +90,10 @@ class MLXLoadedGenerator:
         max_tokens: int = 512,
         temperature: float = 0.2,
     ) -> str:
+        """Signature: def generate(self, prompt: str, max_tokens: int = 512, temperature: float = 0.2) -> str.
+
+        Generate text from the loaded MLX model.
+        """
         prepared_prompt = self._prepare_prompt(prompt)
         sampler = self._make_sampler(temp=temperature)
         output = self._generate_fn(
@@ -95,6 +111,10 @@ class MLXLoadedGenerator:
 
 
 def extract_first_json_object(text: str) -> dict[str, Any] | None:
+    """Signature: def extract_first_json_object(text: str) -> dict[str, Any] | None.
+
+    Extract the first top-level JSON object found in generated text.
+    """
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end <= start:

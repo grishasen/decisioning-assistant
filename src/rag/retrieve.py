@@ -15,6 +15,10 @@ from common.webex_utils import parse_webex_datetime
 
 
 def parse_args() -> argparse.Namespace:
+    """Signature: def parse_args() -> argparse.Namespace.
+
+    Parse command-line arguments for the standalone retrieval CLI.
+    """
     parser = argparse.ArgumentParser(description="Retrieve top-k passages from local Qdrant.")
     parser.add_argument("question")
     parser.add_argument("--config", default="configs/rag.yaml")
@@ -23,6 +27,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
+    """Signature: def _as_float(value: Any, default: float = 0.0) -> float.
+
+    Return the value converted to float when possible.
+    """
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -45,11 +53,31 @@ _WEBEX_RECENCY_HINT_TERMS = (
 
 
 def _metadata_dict(row: dict[str, Any]) -> dict[str, Any]:
+    """Signature: def _metadata_dict(row: dict[str, Any]) -> dict[str, Any].
+
+    Return the metadata mapping stored on a retrieval row.
+    """
     metadata_raw = row.get("metadata")
     return metadata_raw if isinstance(metadata_raw, dict) else {}
 
 
+def _row_rerank_text(row: dict[str, Any]) -> str:
+    # retrieval_text keeps metadata context for retrieval while raw text stays cleaner for prompting.
+    """Signature: def _row_rerank_text(row: dict[str, Any]) -> str.
+
+    Return the text field used for second-stage retrieval reranking.
+    """
+    retrieval_text = str(row.get("retrieval_text") or "").strip()
+    if retrieval_text:
+        return retrieval_text
+    return str(row.get("text") or "").strip()
+
+
 def _row_source_type(row: dict[str, Any]) -> str:
+    """Signature: def _row_source_type(row: dict[str, Any]) -> str.
+
+    Return the normalized source type for a retrieval row.
+    """
     source_type = str(row.get("source_type") or "").strip().lower()
     if source_type:
         return source_type
@@ -68,6 +96,10 @@ def _row_source_type(row: dict[str, Any]) -> str:
 
 
 def _question_prefers_recent_content(question: str) -> bool:
+    """Signature: def _question_prefers_recent_content(question: str) -> bool.
+
+    Return whether the question asks for recent or current information.
+    """
     normalized = " ".join(str(question or "").lower().split())
     if not normalized:
         return False
@@ -78,6 +110,10 @@ def _webex_timestamp(
     row: dict[str, Any],
     preferred_field: str,
 ) -> tuple[datetime | None, str]:
+    """Signature: def _webex_timestamp(row: dict[str, Any], preferred_field: str) -> tuple[datetime | None, str].
+
+    Return the best available Webex timestamp and the field it came from.
+    """
     metadata = _metadata_dict(row)
     fields = [preferred_field] + [
         field for field in ("updated_at", "created_at", "ingested_at") if field != preferred_field
@@ -115,6 +151,10 @@ def _webex_recency_bonus(
     recent_max_bonus: float,
     now_utc: datetime | None = None,
 ) -> tuple[float, float, float, str]:
+    """Signature: def _webex_recency_bonus(question: str, row: dict[str, Any], *, enabled: bool, preferred_field: str, half_life_days: float, max_bonus: float, apply_to_qa_pairs: bool, query_adaptive: bool, recent_half_life_days: float, recent_max_bonus: float, now_utc: datetime | None = None) -> tuple[float, float, float, str].
+
+    Compute the additive recency bonus for a Webex retrieval row.
+    """
     if not enabled or _row_source_type(row) != "webex":
         return 0.0, 0.0, 0.0, ""
 
@@ -144,6 +184,10 @@ def _webex_recency_bonus(
 
 
 def _source_bucket(row: dict[str, Any]) -> str:
+    """Signature: def _source_bucket(row: dict[str, Any]) -> str.
+
+    Build the diversification bucket key for a retrieval row.
+    """
     metadata = _metadata_dict(row)
 
     room_id = str(metadata.get("room_id") or "").strip()
@@ -176,12 +220,16 @@ def _embedding_cosine_scores(
     embedder: SentenceTransformer,
     normalize_embeddings: bool,
 ) -> list[float]:
+    """Signature: def _embedding_cosine_scores(question: str, rows: list[dict[str, Any]], embedder: SentenceTransformer, normalize_embeddings: bool) -> list[float].
+
+    Score retrieval rows with embedding cosine similarity.
+    """
     if not rows:
         return []
 
     query_vector = embedder.encode([question], normalize_embeddings=normalize_embeddings)[0]
     doc_vectors = embedder.encode(
-        [str(row.get("text") or "") for row in rows],
+        [_row_rerank_text(row) for row in rows],
         normalize_embeddings=normalize_embeddings,
     )
 
@@ -192,6 +240,10 @@ def _embedding_cosine_scores(
 
 
 def load_cross_encoder_model(reranker_model: str) -> Any | None:
+    """Signature: def load_cross_encoder_model(reranker_model: str) -> Any | None.
+
+    Load the configured sentence-transformers cross-encoder reranker.
+    """
     try:
         from sentence_transformers import CrossEncoder
 
@@ -206,6 +258,10 @@ def _cross_encoder_scores(
     reranker_model: str,
     cross_encoder: Any | None,
 ) -> list[float]:
+    """Signature: def _cross_encoder_scores(question: str, rows: list[dict[str, Any]], reranker_model: str, cross_encoder: Any | None) -> list[float].
+
+    Score retrieval rows with a cross-encoder reranker.
+    """
     if not rows:
         return []
 
@@ -213,7 +269,7 @@ def _cross_encoder_scores(
     if model is None:
         raise RuntimeError(f"Could not load cross-encoder reranker: {reranker_model}")
 
-    pairs = [(question, str(row.get("text") or "")) for row in rows]
+    pairs = [(question, _row_rerank_text(row)) for row in rows]
     raw_scores = model.predict(pairs, show_progress_bar=False)
     return [float(score) for score in raw_scores]
 
@@ -223,6 +279,10 @@ def _apply_source_cap(
     max_per_source: int,
     top_k: int,
 ) -> list[dict[str, Any]]:
+    """Signature: def _apply_source_cap(rows: list[dict[str, Any]], max_per_source: int, top_k: int) -> list[dict[str, Any]].
+
+    Limit how many final rows can come from the same source bucket.
+    """
     if max_per_source <= 0:
         return rows[:top_k]
 
@@ -292,21 +352,28 @@ def postprocess_retrieval_rows(
     webex_recency_recent_half_life_days: float = 14.0,
     webex_recency_recent_max_bonus: float = 0.0,
 ) -> list[dict[str, Any]]:
+    """Signature: def postprocess_retrieval_rows(question: str, rows: list[dict[str, Any]], *, embedder: SentenceTransformer, normalize_embeddings: bool, top_k: int, score_threshold: float = 0.0, rerank_mode: str = 'cross_encoder', reranker_model: str = 'BAAI/bge-reranker-base', rerank_alpha: float = 0.65, max_per_source: int = 0, qa_pair_score_boost: float = 0.0, cross_encoder: Any | None = None, webex_recency_enabled: bool = False, webex_recency_field: str = 'updated_at', webex_recency_half_life_days: float = 45.0, webex_recency_max_bonus: float = 0.0, webex_recency_apply_to_qa_pairs: bool = True, webex_recency_query_adaptive: bool = True, webex_recency_recent_half_life_days: float = 14.0, webex_recency_recent_max_bonus: float = 0.0) -> list[dict[str, Any]].
+
+    Filter, rerank, rescore, and diversify retrieved rows before prompt building.
+    """
     if top_k <= 0:
         return []
 
     candidates: list[dict[str, Any]] = []
     for row in rows:
-        text = str(row.get("text") or "").strip()
-        if not text:
+        ranking_text = _row_rerank_text(row)
+        if not ranking_text:
             continue
+
+        display_text = str(row.get("text") or "").strip() or ranking_text
 
         qdrant_score = _as_float(row.get("qdrant_score", row.get("score", 0.0)))
         if score_threshold > 0.0 and qdrant_score < score_threshold:
             continue
 
         copied = dict(row)
-        copied["text"] = text
+        copied["text"] = display_text
+        copied["retrieval_text"] = ranking_text
         copied["qdrant_score"] = qdrant_score
         candidates.append(copied)
 
@@ -383,6 +450,7 @@ def postprocess_retrieval_rows(
 
 
 class LocalRetriever:
+    """Run local Qdrant retrieval, reranking, and recency-aware scoring."""
     def __init__(
         self,
         qdrant_path: str,
@@ -405,6 +473,10 @@ class LocalRetriever:
         webex_recency_recent_half_life_days: float,
         webex_recency_recent_max_bonus: float,
     ) -> None:
+        """Signature: def __init__(self, qdrant_path: str, collection_name: str, embedding_model: str, normalize_embeddings: bool, fetch_k: int, score_threshold: float, rerank_mode: str, reranker_model: str, rerank_alpha: float, max_per_source: int, qa_pair_score_boost: float, webex_recency_enabled: bool, webex_recency_field: str, webex_recency_half_life_days: float, webex_recency_max_bonus: float, webex_recency_apply_to_qa_pairs: bool, webex_recency_query_adaptive: bool, webex_recency_recent_half_life_days: float, webex_recency_recent_max_bonus: float) -> None.
+
+        Load the embedding model, local Qdrant client, and reranker state.
+        """
         self._collection_name = collection_name
         self._normalize_embeddings = normalize_embeddings
         self._embedder = SentenceTransformer(embedding_model)
@@ -434,25 +506,49 @@ class LocalRetriever:
 
     @property
     def embedder(self) -> SentenceTransformer:
+        """Signature: def embedder(self) -> SentenceTransformer.
+
+        Return the embedding model used for local retrieval.
+        """
         return self._embedder
 
     @property
     def normalize_embeddings(self) -> bool:
+        """Signature: def normalize_embeddings(self) -> bool.
+
+        Return whether embedding vectors are normalized for scoring.
+        """
         return self._normalize_embeddings
 
     @property
     def cross_encoder(self) -> Any | None:
+        """Signature: def cross_encoder(self) -> Any | None.
+
+        Return the loaded cross-encoder reranker, if one is available.
+        """
         return self._cross_encoder
 
     @property
     def reranker_model(self) -> str:
+        """Signature: def reranker_model(self) -> str.
+
+        Return the configured cross-encoder model name.
+        """
         return self._reranker_model
 
     @property
     def rerank_mode(self) -> str:
+        """Signature: def rerank_mode(self) -> str.
+
+        Return the active retrieval rerank mode.
+        """
         return self._rerank_mode
 
     def ensure_cross_encoder(self, reranker_model: str | None = None) -> Any | None:
+        """Signature: def ensure_cross_encoder(self, reranker_model: str | None = None) -> Any | None.
+
+        Load or reuse the configured cross-encoder reranker.
+        """
         if self._cross_encoder is not None:
             return self._cross_encoder
 
@@ -466,6 +562,10 @@ class LocalRetriever:
         return loaded
 
     def search(self, question: str, top_k: int) -> list[dict[str, Any]]:
+        """Signature: def search(self, question: str, top_k: int) -> list[dict[str, Any]].
+
+        Retrieve, rerank, and score the best rows for a question.
+        """
         requested_top_k = max(1, int(top_k))
         fetch_k = max(requested_top_k, self._fetch_k)
 
@@ -495,6 +595,7 @@ class LocalRetriever:
                     "source_type": payload.get("source_type"),
                     "record_type": payload.get("record_type", "chunk"),
                     "text": payload.get("text") or "",
+                    "retrieval_text": payload.get("retrieval_text") or payload.get("text") or "",
                     "metadata": payload.get("metadata", {}),
                 }
             )
@@ -524,6 +625,10 @@ class LocalRetriever:
 
 
 def resolve_top_k(cfg: dict[str, Any], top_k_override: int = 0) -> int:
+    """Signature: def resolve_top_k(cfg: dict[str, Any], top_k_override: int = 0) -> int.
+
+    Resolve the effective top-k value from config and overrides.
+    """
     top_k = int(top_k_override or cfg.get("top_k", 6))
     if top_k <= 0:
         raise ValueError("top_k must be > 0")
@@ -531,6 +636,10 @@ def resolve_top_k(cfg: dict[str, Any], top_k_override: int = 0) -> int:
 
 
 def build_local_retriever(cfg: dict[str, Any]) -> LocalRetriever:
+    """Signature: def build_local_retriever(cfg: dict[str, Any]) -> LocalRetriever.
+
+    Build a LocalRetriever from rag.yaml settings.
+    """
     top_k = resolve_top_k(cfg, 0)
     fetch_k = int(cfg.get("fetch_k", max(top_k * 3, top_k)))
 
@@ -570,6 +679,10 @@ def resolve_answer_rerank_resources(
     rerank_mode: str,
     reranker_model: str,
 ) -> tuple[SentenceTransformer | None, Any | None]:
+    """Signature: def resolve_answer_rerank_resources(*, retriever: LocalRetriever, sample_count: int, rerank_mode: str, reranker_model: str) -> tuple[SentenceTransformer | None, Any | None].
+
+    Resolve the embedder or cross-encoder needed for answer reranking.
+    """
     if sample_count <= 1:
         return None, None
 
@@ -592,11 +705,19 @@ def run_retrieval(
     cfg: dict[str, Any],
     top_k_override: int = 0,
 ) -> list[dict[str, Any]]:
+    """Signature: def run_retrieval(question: str, cfg: dict[str, Any], top_k_override: int = 0) -> list[dict[str, Any]].
+
+    Run the end-to-end local retrieval pipeline for one question.
+    """
     retriever = build_local_retriever(cfg)
     return retriever.search(question, resolve_top_k(cfg, top_k_override))
 
 
 def main() -> None:
+    """Signature: def main() -> None.
+
+    Run the standalone retrieval CLI entrypoint.
+    """
     args = parse_args()
     cfg = read_yaml(args.config)
     rows = run_retrieval(args.question, cfg, args.top_k)

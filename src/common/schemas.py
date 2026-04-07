@@ -17,6 +17,7 @@ _DOC_TYPE_ALIASES = {
 
 
 class CanonicalMetadata(BaseModel):
+    """Represent normalized metadata fields shared across ingested sources."""
     product: str | None = None
     doc_version: str | None = None
     doc_type: Literal["guide", "api", "release-note"] | None = None
@@ -35,6 +36,10 @@ class CanonicalMetadata(BaseModel):
 
 
 def normalize_doc_type(value: str | None) -> str | None:
+    """Signature: def normalize_doc_type(value: str | None) -> str | None.
+
+    Normalize document type aliases into the canonical metadata value.
+    """
     if value is None:
         return None
 
@@ -52,10 +57,15 @@ def normalize_doc_type(value: str | None) -> str | None:
 
 
 def build_metadata(**kwargs: Any) -> dict[str, Any]:
+    """Signature: def build_metadata(**kwargs: Any) -> dict[str, Any].
+
+    Build a validated metadata dictionary from keyword values.
+    """
     return CanonicalMetadata(**kwargs).model_dump(mode="json", exclude_none=True)
 
 
 class DocumentRecord(BaseModel):
+    """Represent an ingested source document before chunking."""
     doc_id: str
     source_type: str
     source_ref: str
@@ -69,6 +79,7 @@ class DocumentRecord(BaseModel):
 
 
 class ChunkRecord(BaseModel):
+    """Represent a normalized text chunk used for QA generation and RAG."""
     chunk_id: str
     doc_id: str
     source_type: str
@@ -78,6 +89,7 @@ class ChunkRecord(BaseModel):
 
 
 class QARecord(BaseModel):
+    """Represent a synthetic question-answer pair linked to a chunk."""
     qa_id: str
     question: str
     answer: str

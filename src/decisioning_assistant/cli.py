@@ -13,6 +13,10 @@ logger = get_logger("decisioning_assistant.cli")
 
 
 def _resolve_path(path: str, project_root: Path) -> str:
+    """Signature: def _resolve_path(path: str, project_root: Path) -> str.
+
+    Resolve a config or data path relative to the project root.
+    """
     candidate = Path(path)
     if candidate.is_absolute():
         return str(candidate)
@@ -20,16 +24,28 @@ def _resolve_path(path: str, project_root: Path) -> str:
 
 
 def _run(cmd: Sequence[str], project_root: Path) -> None:
+    """Signature: def _run(cmd: Sequence[str], project_root: Path) -> None.
+
+    Run a subprocess command from the project root.
+    """
     logger.info("Running: %s", " ".join(cmd))
     subprocess.run(cmd, cwd=str(project_root), check=True)
 
 
 def _load_sources_cfg(path: str, project_root: Path) -> dict:
+    """Signature: def _load_sources_cfg(path: str, project_root: Path) -> dict.
+
+    Load the sources configuration file for ingestion commands.
+    """
     cfg_path = _resolve_path(path, project_root)
     return read_yaml(cfg_path)
 
 
 def _pick_metadata_value(override: str, cfg: dict, key: str) -> str:
+    """Signature: def _pick_metadata_value(override: str, cfg: dict, key: str) -> str.
+
+    Pick a metadata value from CLI overrides or the loaded config.
+    """
     if isinstance(override, str) and override.strip():
         return override.strip()
 
@@ -40,12 +56,20 @@ def _pick_metadata_value(override: str, cfg: dict, key: str) -> str:
 
 
 def _append_if_value(cmd: list[str], flag: str, value: str) -> None:
+    """Signature: def _append_if_value(cmd: list[str], flag: str, value: str) -> None.
+
+    Append a flag and value to a command when the value is non-empty.
+    """
     cleaned = value.strip()
     if cleaned:
         cmd.extend([flag, cleaned])
 
 
 def cmd_ingest(args: argparse.Namespace) -> None:
+    """Signature: def cmd_ingest(args: argparse.Namespace) -> None.
+
+    Run the ingest CLI command.
+    """
     project_root = Path(args.project_root).resolve()
     cfg = _load_sources_cfg(args.sources_config, project_root)
 
@@ -116,6 +140,10 @@ def cmd_ingest(args: argparse.Namespace) -> None:
 
 
 def cmd_qa(args: argparse.Namespace) -> None:
+    """Signature: def cmd_qa(args: argparse.Namespace) -> None.
+
+    Run the qa CLI command.
+    """
     project_root = Path(args.project_root).resolve()
     qa_config = _resolve_path(args.qa_config, project_root)
     models_config = _resolve_path(args.models_config, project_root)
@@ -160,6 +188,10 @@ def cmd_qa(args: argparse.Namespace) -> None:
 
 
 def cmd_finetune(args: argparse.Namespace) -> None:
+    """Signature: def cmd_finetune(args: argparse.Namespace) -> None.
+
+    Run the finetune CLI command.
+    """
     project_root = Path(args.project_root).resolve()
     cmd = [
         sys.executable,
@@ -174,6 +206,10 @@ def cmd_finetune(args: argparse.Namespace) -> None:
 
 
 def cmd_rag_index(args: argparse.Namespace) -> None:
+    """Signature: def cmd_rag_index(args: argparse.Namespace) -> None.
+
+    Run the rag index CLI command.
+    """
     project_root = Path(args.project_root).resolve()
     cmd = [
         sys.executable,
@@ -189,7 +225,61 @@ def cmd_rag_index(args: argparse.Namespace) -> None:
     _run(cmd, project_root)
 
 
+def cmd_rag_eval_retrieval(args: argparse.Namespace) -> None:
+    """Signature: def cmd_rag_eval_retrieval(args: argparse.Namespace) -> None.
+
+    Run the rag eval retrieval CLI command.
+    """
+    project_root = Path(args.project_root).resolve()
+    cmd = [
+        sys.executable,
+        "-m",
+        "rag.eval_retrieval",
+        "--rag-config",
+        _resolve_path(args.rag_config, project_root),
+        "--eval-path",
+        _resolve_path(args.eval_path, project_root),
+        "--output-path",
+        _resolve_path(args.output_path, project_root),
+    ]
+    if args.top_k > 0:
+        cmd.extend(["--top-k", str(args.top_k)])
+    _run(cmd, project_root)
+
+
+def cmd_rag_eval_answering(args: argparse.Namespace) -> None:
+    """Signature: def cmd_rag_eval_answering(args: argparse.Namespace) -> None.
+
+    Run the rag eval answering CLI command.
+    """
+    project_root = Path(args.project_root).resolve()
+    cmd = [
+        sys.executable,
+        "-m",
+        "rag.eval_answering",
+        "--rag-config",
+        _resolve_path(args.rag_config, project_root),
+        "--models-config",
+        _resolve_path(args.models_config, project_root),
+        "--eval-path",
+        _resolve_path(args.eval_path, project_root),
+        "--output-path",
+        _resolve_path(args.output_path, project_root),
+    ]
+    if args.top_k > 0:
+        cmd.extend(["--top-k", str(args.top_k)])
+    if args.max_cases > 0:
+        cmd.extend(["--max-cases", str(args.max_cases)])
+    if args.adapter_path:
+        cmd.extend(["--adapter-path", args.adapter_path])
+    _run(cmd, project_root)
+
+
 def cmd_rag_export(args: argparse.Namespace) -> None:
+    """Signature: def cmd_rag_export(args: argparse.Namespace) -> None.
+
+    Run the rag export CLI command.
+    """
     project_root = Path(args.project_root).resolve()
     cmd = [
         sys.executable,
@@ -208,6 +298,10 @@ def cmd_rag_export(args: argparse.Namespace) -> None:
 
 
 def cmd_rag_import(args: argparse.Namespace) -> None:
+    """Signature: def cmd_rag_import(args: argparse.Namespace) -> None.
+
+    Run the rag import CLI command.
+    """
     project_root = Path(args.project_root).resolve()
     cmd = [
         sys.executable,
@@ -230,6 +324,10 @@ def cmd_rag_import(args: argparse.Namespace) -> None:
 
 
 def cmd_webex_fetch(args: argparse.Namespace) -> None:
+    """Signature: def cmd_webex_fetch(args: argparse.Namespace) -> None.
+
+    Run the webex fetch CLI command.
+    """
     project_root = Path(args.project_root).resolve()
     cmd = [
         sys.executable,
@@ -252,6 +350,10 @@ def cmd_webex_fetch(args: argparse.Namespace) -> None:
 
 
 def cmd_app(args: argparse.Namespace) -> None:
+    """Signature: def cmd_app(args: argparse.Namespace) -> None.
+
+    Run the app CLI command.
+    """
     project_root = Path(args.project_root).resolve()
 
     from rag import assistant_app
@@ -276,6 +378,10 @@ def cmd_app(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Signature: def build_parser() -> argparse.ArgumentParser.
+
+    Build the top-level DecisioningAssistant CLI parser.
+    """
     parser = argparse.ArgumentParser(
         prog="decisioning-assistant",
         description=(
@@ -349,6 +455,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Drop and recreate collection before indexing.",
     )
     rag_index_parser.set_defaults(func=cmd_rag_index)
+
+    rag_eval_retrieval_parser = subparsers.add_parser(
+        "rag-eval-retrieval",
+        help="Evaluate retrieval ranking on a labeled JSONL query set.",
+    )
+    rag_eval_retrieval_parser.add_argument("--rag-config", default="configs/rag.yaml")
+    rag_eval_retrieval_parser.add_argument("--eval-path", default="configs/rag_eval.sample.jsonl")
+    rag_eval_retrieval_parser.add_argument("--top-k", type=int, default=0)
+    rag_eval_retrieval_parser.add_argument(
+        "--output-path",
+        default="data/eval/reports/retrieval_report.json",
+    )
+    rag_eval_retrieval_parser.set_defaults(func=cmd_rag_eval_retrieval)
+
+    rag_eval_answering_parser = subparsers.add_parser(
+        "rag-eval-answering",
+        help="Run end-to-end answer evaluation on a labeled JSONL query set.",
+    )
+    rag_eval_answering_parser.add_argument("--rag-config", default="configs/rag.yaml")
+    rag_eval_answering_parser.add_argument("--models-config", default="configs/models.yaml")
+    rag_eval_answering_parser.add_argument("--eval-path", default="configs/rag_eval.sample.jsonl")
+    rag_eval_answering_parser.add_argument("--adapter-path", default="")
+    rag_eval_answering_parser.add_argument("--top-k", type=int, default=0)
+    rag_eval_answering_parser.add_argument("--max-cases", type=int, default=0)
+    rag_eval_answering_parser.add_argument(
+        "--output-path",
+        default="data/eval/reports/answering_report.json",
+    )
+    rag_eval_answering_parser.set_defaults(func=cmd_rag_eval_answering)
 
     rag_export_parser = subparsers.add_parser(
         "rag-export",
@@ -435,6 +570,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Signature: def main(argv: Sequence[str] | None = None) -> int.
+
+    Run the DecisioningAssistant CLI entrypoint.
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
 

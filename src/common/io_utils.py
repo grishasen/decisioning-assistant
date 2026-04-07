@@ -9,10 +9,18 @@ import yaml
 
 
 def ensure_parent_dir(path: str | Path) -> None:
+    """Signature: def ensure_parent_dir(path: str | Path) -> None.
+
+    Create the parent directory for a file path when needed.
+    """
     Path(path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
 
 
 def read_yaml(path: str | Path) -> dict[str, Any]:
+    """Signature: def read_yaml(path: str | Path) -> dict[str, Any].
+
+    Load a YAML mapping from disk.
+    """
     with Path(path).expanduser().open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle) or {}
     if not isinstance(data, dict):
@@ -21,17 +29,29 @@ def read_yaml(path: str | Path) -> dict[str, Any]:
 
 
 def read_json(path: str | Path) -> Any:
+    """Signature: def read_json(path: str | Path) -> Any.
+
+    Load JSON data from disk.
+    """
     with Path(path).expanduser().open("r", encoding="utf-8") as handle:
         return json.load(handle)
 
 
 def write_json(path: str | Path, payload: Any) -> None:
+    """Signature: def write_json(path: str | Path, payload: Any) -> None.
+
+    Write JSON data to disk with UTF-8 encoding.
+    """
     ensure_parent_dir(path)
     with Path(path).expanduser().open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
 def iter_jsonl(path: str | Path) -> Iterable[dict[str, Any]]:
+    """Signature: def iter_jsonl(path: str | Path) -> Iterable[dict[str, Any]].
+
+    Yield parsed JSON objects from a JSONL file.
+    """
     with Path(path).expanduser().open("r", encoding="utf-8") as handle:
         for raw_line in handle:
             line = raw_line.strip()
@@ -40,6 +60,10 @@ def iter_jsonl(path: str | Path) -> Iterable[dict[str, Any]]:
             yield json.loads(line)
 
 def count_iter_jsonl(path: str | Path) -> int:
+    """Signature: def count_iter_jsonl(path: str | Path) -> int.
+
+    Count non-empty rows in a JSONL file.
+    """
     count = 0
     with Path(path).expanduser().open("r", encoding="utf-8") as handle:
         for raw_line in handle:
@@ -49,6 +73,10 @@ def count_iter_jsonl(path: str | Path) -> int:
 
 
 def write_jsonl(path: str | Path, rows: Iterable[dict[str, Any]]) -> int:
+    """Signature: def write_jsonl(path: str | Path, rows: Iterable[dict[str, Any]]) -> int.
+
+    Write JSONL rows to disk and return the number written.
+    """
     ensure_parent_dir(path)
     count = 0
     with Path(path).expanduser().open("w", encoding="utf-8") as handle:
@@ -59,6 +87,10 @@ def write_jsonl(path: str | Path, rows: Iterable[dict[str, Any]]) -> int:
 
 
 def append_jsonl(path: str | Path, rows: Iterable[dict[str, Any]]) -> int:
+    """Signature: def append_jsonl(path: str | Path, rows: Iterable[dict[str, Any]]) -> int.
+
+    Append JSONL rows to disk and return the number written.
+    """
     ensure_parent_dir(path)
     count = 0
     with Path(path).expanduser().open("a", encoding="utf-8") as handle:
@@ -69,6 +101,10 @@ def append_jsonl(path: str | Path, rows: Iterable[dict[str, Any]]) -> int:
 
 
 def repair_jsonl_tail(path: str | Path) -> int:
+    """Signature: def repair_jsonl_tail(path: str | Path) -> int.
+
+    Truncate malformed trailing JSONL lines and return how many were dropped.
+    """
     file_path = Path(path).expanduser()
     if not file_path.exists():
         return 0

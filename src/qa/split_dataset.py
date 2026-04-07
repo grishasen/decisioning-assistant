@@ -17,12 +17,20 @@ SYSTEM_PROMPT = (
 
 
 def parse_args() -> argparse.Namespace:
+    """Signature: def parse_args() -> argparse.Namespace.
+
+    Parse CLI arguments for split dataset.
+    """
     parser = argparse.ArgumentParser(description="Split cleaned QA into train/valid/test JSONL files.")
     parser.add_argument("--qa-config", default="configs/qa_generation.yaml")
     return parser.parse_args()
 
 
 def _to_mlx_chat_row(item: dict[str, Any]) -> dict[str, Any]:
+    """Signature: def _to_mlx_chat_row(item: dict[str, Any]) -> dict[str, Any].
+
+    To mlx chat row.
+    """
     return {
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -39,6 +47,10 @@ def _to_mlx_chat_row(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _split(items: list[dict[str, Any]], train_ratio: float, valid_ratio: float) -> tuple[list, list, list]:
+    """Signature: def _split(items: list[dict[str, Any]], train_ratio: float, valid_ratio: float) -> tuple[list, list, list].
+
+    Handle split.
+    """
     n = len(items)
     train_end = int(n * train_ratio)
     valid_end = train_end + int(n * valid_ratio)
@@ -49,6 +61,10 @@ def _split(items: list[dict[str, Any]], train_ratio: float, valid_ratio: float) 
 
 
 def main() -> None:
+    """Signature: def main() -> None.
+
+    Run the split dataset entrypoint.
+    """
     args = parse_args()
     qa_cfg = read_yaml(args.qa_config)
 

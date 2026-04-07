@@ -2,6 +2,10 @@ from __future__ import annotations
 
 
 def qa_generation_prompt(context: str, qa_per_chunk: int) -> str:
+    """Signature: def qa_generation_prompt(context: str, qa_per_chunk: int) -> str.
+
+    Qa generation prompt.
+    """
     return f"""
 You are generating training data for an English instruction-tuned model.
 Create exactly {qa_per_chunk} question-answer pairs grounded only in the provided context.
@@ -20,6 +24,10 @@ Context:
 
 
 def webex_thread_question_prompt(thread_start: str, replies: str) -> str:
+    """Signature: def webex_thread_question_prompt(thread_start: str, replies: str) -> str.
+
+    Webex thread question prompt.
+    """
     return f"""
 You are generating English training data for an instruction-tuned technical assistant.
 A Webex thread contains an initial message and reply messages.
@@ -42,6 +50,10 @@ Reply messages:
 
 
 def answer_with_context_prompt(question: str, context: str) -> str:
+    """Signature: def answer_with_context_prompt(question: str, context: str) -> str.
+
+    Answer with context prompt.
+    """
     return f"""
 You are a precise assistant.
 Use only the context below. If the context is insufficient, say you don't know.

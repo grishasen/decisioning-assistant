@@ -16,6 +16,7 @@ from rag.prompt_budget import (
     clip_text_to_tokens,
     format_context,
     format_history,
+    normalize_prompt_mode,
     select_context_rows,
 )
 from rag.retrieve import LocalRetriever, resolve_answer_rerank_resources
@@ -26,6 +27,7 @@ _SECTION_REF_RE = re.compile(r"#section=(\d+)(?:-\d+)?")
 
 @dataclass(frozen=True)
 class RetrievalConfig:
+    """Store runtime retrieval settings for the Streamlit app."""
     qdrant_path: str
     collection_name: str
     embedding_model: str
@@ -49,6 +51,7 @@ class RetrievalConfig:
 
 @dataclass(frozen=True)
 class GenerationConfig:
+    """Store runtime generation settings for the Streamlit app."""
     model_name: str
     max_tokens: int
     temperature: float
@@ -58,6 +61,10 @@ class GenerationConfig:
 
 @st.cache_resource(show_spinner=False)
 def _load_retriever(cfg: RetrievalConfig) -> LocalRetriever:
+    """Signature: def _load_retriever(cfg: RetrievalConfig) -> LocalRetriever.
+
+    Load retriever.
+    """
     return LocalRetriever(
         qdrant_path=cfg.qdrant_path,
         collection_name=cfg.collection_name,
@@ -83,6 +90,10 @@ def _load_retriever(cfg: RetrievalConfig) -> LocalRetriever:
 
 @st.cache_resource(show_spinner=False)
 def _load_generator(cfg: GenerationConfig) -> MLXLoadedGenerator:
+    """Signature: def _load_generator(cfg: GenerationConfig) -> MLXLoadedGenerator.
+
+    Load generator.
+    """
     return MLXLoadedGenerator(
         model=cfg.model_name,
         adapter_path=cfg.adapter_path,
@@ -94,16 +105,28 @@ def _read_configs(
     rag_config_path: str,
     models_config_path: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Signature: def _read_configs(rag_config_path: str, models_config_path: str) -> tuple[dict[str, Any], dict[str, Any]].
+
+    Read configs.
+    """
     rag_cfg = read_yaml(rag_config_path)
     models_cfg = read_yaml(models_config_path)
     return rag_cfg, models_cfg
 
 
 def _clamp(value: int, minimum: int, maximum: int) -> int:
+    """Signature: def _clamp(value: int, minimum: int, maximum: int) -> int.
+
+    Handle clamp.
+    """
     return max(minimum, min(value, maximum))
 
 
 def _infer_source_type(row: dict[str, Any]) -> str:
+    """Signature: def _infer_source_type(row: dict[str, Any]) -> str.
+
+    Infer source type.
+    """
     source_type = str(row.get("source_type") or "").strip().lower()
     if source_type:
         return source_type
@@ -117,6 +140,10 @@ def _infer_source_type(row: dict[str, Any]) -> str:
 
 
 def _format_datetime(raw_value: Any) -> str:
+    """Signature: def _format_datetime(raw_value: Any) -> str.
+
+    Format datetime.
+    """
     if raw_value is None:
         return "unknown"
 
@@ -132,6 +159,10 @@ def _format_datetime(raw_value: Any) -> str:
 
 
 def _extract_pdf_page(source_ref: str, metadata: dict[str, Any]) -> str:
+    """Signature: def _extract_pdf_page(source_ref: str, metadata: dict[str, Any]) -> str.
+
+    Extract pdf page.
+    """
     page_start_raw = metadata.get("page_start") or metadata.get("page")
     page_end_raw = metadata.get("page_end")
 
@@ -164,6 +195,10 @@ def _extract_pdf_page(source_ref: str, metadata: dict[str, Any]) -> str:
 
 
 def _format_source_line(row: dict[str, Any]) -> str:
+    """Signature: def _format_source_line(row: dict[str, Any]) -> str.
+
+    Format source line.
+    """
     metadata_raw = row.get("metadata")
     metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
     source_ref = str(row.get("source_ref") or "unknown")
@@ -206,6 +241,10 @@ def _format_source_line(row: dict[str, Any]) -> str:
 
 
 def _source_popup_text(row: dict[str, Any], max_chars: int = 20000) -> str:
+    """Signature: def _source_popup_text(row: dict[str, Any], max_chars: int = 20000) -> str.
+
+    Source popup text.
+    """
     value = str(row.get("text") or "").strip()
     if not value:
         return "No retrieved document text available for this source."
@@ -217,6 +256,10 @@ def _source_popup_text(row: dict[str, Any], max_chars: int = 20000) -> str:
 
 
 def _webex_parent_message_link(row: dict[str, Any]) -> str:
+    """Signature: def _webex_parent_message_link(row: dict[str, Any]) -> str.
+
+    Webex parent message link.
+    """
     metadata_raw = row.get("metadata")
     metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
     value = metadata.get("webex_parent_message_link")
@@ -226,6 +269,10 @@ def _webex_parent_message_link(row: dict[str, Any]) -> str:
 
 
 def _render_source_row(row: dict[str, Any], index: int) -> None:
+    """Signature: def _render_source_row(row: dict[str, Any], index: int) -> None.
+
+    Render source row.
+    """
     left, right = st.columns([0.82, 0.18], vertical_alignment="top")
 
     with left:
@@ -242,6 +289,10 @@ def _render_source_row(row: dict[str, Any], index: int) -> None:
 
 
 def main() -> None:
+    """Signature: def main() -> None.
+
+    Run the assistant app entrypoint.
+    """
     st.set_page_config(page_title="Decisioning Assistant RAG Chat", layout="wide")
     st.title("Decisioning Assistant RAG Chat")
     st.caption("Local RAG chat using Qdrant + local MLX model")
@@ -338,6 +389,7 @@ def main() -> None:
     answer_rerank_support_top_k_default = max(
         1, int(rag_cfg.get("answer_rerank_support_top_k", 3))
     )
+    prompt_mode = normalize_prompt_mode(str(rag_cfg.get("prompt_mode", "grounded")))
 
     retrieval_modes = ["cross_encoder", "embedding_cosine", "none"]
     if rerank_mode_default not in retrieval_modes:
@@ -653,6 +705,7 @@ def main() -> None:
             f"history={max_history_tokens}, chunk={max_chunk_tokens}, "
             f"context={max_total_context_tokens}, prompt={max_prompt_tokens}"
         )
+        st.caption(f"Prompt mode: {prompt_mode}")
 
     retr_cfg = RetrievalConfig(
         qdrant_path=str(rag_cfg.get("qdrant_path", "data/rag/vectordb")),
@@ -750,6 +803,7 @@ def main() -> None:
                     question=question,
                     context=context,
                     history=history,
+                    prompt_mode=prompt_mode,
                 )
                 prompt = clip_text(prompt, max_prompt_chars)
                 prompt = clip_text_to_tokens(prompt, max_prompt_tokens)

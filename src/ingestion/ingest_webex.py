@@ -21,6 +21,10 @@ MESSAGE_KEYS = ("messages", "items", "posts", "results", "thread", "replies")
 
 
 def _decode_webex_entity_uri(value: Any) -> str:
+    """Signature: def _decode_webex_entity_uri(value: Any) -> str.
+
+    Decode webex entity uri.
+    """
     if not isinstance(value, str):
         return ""
 
@@ -39,6 +43,10 @@ def _decode_webex_entity_uri(value: Any) -> str:
 
 
 def _extract_webex_entity_token(value: Any) -> str:
+    """Signature: def _extract_webex_entity_token(value: Any) -> str.
+
+    Extract webex entity token.
+    """
     if not isinstance(value, str):
         return ""
 
@@ -60,6 +68,10 @@ def _extract_webex_entity_token(value: Any) -> str:
 
 
 def _build_webex_parent_message_link(room_id: Any, message_id: Any) -> str:
+    """Signature: def _build_webex_parent_message_link(room_id: Any, message_id: Any) -> str.
+
+    Build webex parent message link.
+    """
     room_token = _extract_webex_entity_token(room_id)
     message_token = _extract_webex_entity_token(message_id)
     if not room_token or not message_token:
@@ -68,10 +80,18 @@ def _build_webex_parent_message_link(room_id: Any, message_id: Any) -> str:
 
 
 def _coerce_datetime(value: Any) -> datetime | None:
+    """Signature: def _coerce_datetime(value: Any) -> datetime | None.
+
+    Coerce datetime.
+    """
     return parse_webex_datetime(value)
 
 
 def _message_text(msg: dict[str, Any]) -> str:
+    """Signature: def _message_text(msg: dict[str, Any]) -> str.
+
+    Message text.
+    """
     for key in ("markdown", "text", "body", "message"):
         value = msg.get(key)
         if isinstance(value, str) and value.strip():
@@ -80,12 +100,20 @@ def _message_text(msg: dict[str, Any]) -> str:
 
 
 def _looks_like_message(obj: dict[str, Any]) -> bool:
+    """Signature: def _looks_like_message(obj: dict[str, Any]) -> bool.
+
+    Looks like message.
+    """
     has_id = isinstance(obj.get("id"), str)
     has_text = bool(_message_text(obj))
     return has_id and has_text
 
 
 def _iter_message_candidates(payload: Any) -> Iterable[dict[str, Any]]:
+    """Signature: def _iter_message_candidates(payload: Any) -> Iterable[dict[str, Any]].
+
+    Iterate over message candidates.
+    """
     if isinstance(payload, list):
         for item in payload:
             yield from _iter_message_candidates(item)
@@ -104,6 +132,10 @@ def _iter_message_candidates(payload: Any) -> Iterable[dict[str, Any]]:
 
 
 def _message_author(msg: dict[str, Any]) -> str:
+    """Signature: def _message_author(msg: dict[str, Any]) -> str.
+
+    Message author.
+    """
     for key in ("personDisplayName", "displayName", "personEmail"):
         value = msg.get(key)
         if isinstance(value, str) and value.strip():
@@ -112,11 +144,19 @@ def _message_author(msg: dict[str, Any]) -> str:
 
 
 def _message_id(msg: dict[str, Any]) -> str:
+    """Signature: def _message_id(msg: dict[str, Any]) -> str.
+
+    Message id.
+    """
     value = msg.get("id")
     return value.strip() if isinstance(value, str) else ""
 
 
 def _thread_id(msg: dict[str, Any]) -> str:
+    """Signature: def _thread_id(msg: dict[str, Any]) -> str.
+
+    Thread id.
+    """
     parent_id = msg.get("parentId")
     if isinstance(parent_id, str) and parent_id.strip():
         return parent_id.strip()
@@ -124,6 +164,10 @@ def _thread_id(msg: dict[str, Any]) -> str:
 
 
 def _room_id(msg: dict[str, Any]) -> str:
+    """Signature: def _room_id(msg: dict[str, Any]) -> str.
+
+    Room id.
+    """
     for key in ("roomId", "spaceId"):
         value = msg.get(key)
         if isinstance(value, str) and value.strip():
@@ -132,11 +176,19 @@ def _room_id(msg: dict[str, Any]) -> str:
 
 
 def _room_title_from_path(path: Path) -> str:
+    """Signature: def _room_title_from_path(path: Path) -> str.
+
+    Room title from path.
+    """
     stem = normalize_whitespace(path.stem)
     return stem or "Webex Space"
 
 
 def _build_thread_message_line(item: dict[str, Any]) -> str:
+    """Signature: def _build_thread_message_line(item: dict[str, Any]) -> str.
+
+    Build thread message line.
+    """
     created = item.get("created")
     return format_webex_thread_message_line(
         author=str(item.get("author") or "unknown-user"),
@@ -146,6 +198,10 @@ def _build_thread_message_line(item: dict[str, Any]) -> str:
 
 
 def _sorted_thread_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Signature: def _sorted_thread_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]].
+
+    Sorted thread messages.
+    """
     return sorted(
         messages,
         key=lambda item: (
@@ -164,6 +220,10 @@ def _build_thread_records(
     doc_type: str | None,
     ingested_at: datetime,
 ) -> list[DocumentRecord]:
+    """Signature: def _build_thread_records(path: Path, payload: Any, product: str | None, doc_version: str | None, doc_type: str | None, ingested_at: datetime) -> list[DocumentRecord].
+
+    Build thread records.
+    """
     room_title_from_file = _room_title_from_path(path)
     parsed_messages: list[dict[str, Any]] = []
     seen_messages: set[str] = set()
@@ -349,6 +409,10 @@ def _build_message_records(
     doc_type: str | None,
     ingested_at: datetime,
 ) -> list[DocumentRecord]:
+    """Signature: def _build_message_records(path: Path, payload: Any, product: str | None, doc_version: str | None, doc_type: str | None, ingested_at: datetime) -> list[DocumentRecord].
+
+    Build message records.
+    """
     records: list[DocumentRecord] = []
     room_title_from_file = _room_title_from_path(path)
     for msg in _iter_message_candidates(payload):
@@ -420,6 +484,10 @@ def parse_dump_file(
     doc_type: str | None = None,
     ingested_at: datetime | None = None,
 ) -> list[DocumentRecord]:
+    """Signature: def parse_dump_file(path: Path, group_by_thread: bool = True, product: str | None = None, doc_version: str | None = None, doc_type: str | None = None, ingested_at: datetime | None = None) -> list[DocumentRecord].
+
+    Parse dump file.
+    """
     payload: Any
     if path.suffix.lower() == ".jsonl":
         payload = list(iter_jsonl(path))
@@ -449,6 +517,10 @@ def parse_dump_file(
 
 
 def parse_args() -> argparse.Namespace:
+    """Signature: def parse_args() -> argparse.Namespace.
+
+    Parse CLI arguments for ingest webex.
+    """
     parser = argparse.ArgumentParser(description="Convert Webex archive dumps into normalized JSONL docs.")
     parser.add_argument("--input-dir", default="data/raw/webex")
     parser.add_argument("--output", default="data/staging/documents/webex_documents.jsonl")
@@ -469,6 +541,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Signature: def main() -> None.
+
+    Run the ingest webex entrypoint.
+    """
     args = parse_args()
     input_dir = Path(args.input_dir)
     if not input_dir.exists():

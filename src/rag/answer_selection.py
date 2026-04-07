@@ -10,6 +10,7 @@ from common.vector_utils import dot_score
 
 @dataclass(frozen=True)
 class AnswerSelectionConfig:
+    """Store answer sampling and reranking settings."""
     sample_count: int = 1
     rerank_mode: str = "none"
     rerank_alpha: float = 0.7
@@ -17,6 +18,10 @@ class AnswerSelectionConfig:
 
 
 def _unique_candidates(candidates: list[str]) -> list[str]:
+    """Signature: def _unique_candidates(candidates: list[str]) -> list[str].
+
+    Unique candidates.
+    """
     unique: list[str] = []
     seen: set[str] = set()
     for candidate in candidates:
@@ -35,6 +40,10 @@ def generate_answer_candidates(
         temperature: float,
         sample_count: int,
 ) -> list[str]:
+    """Signature: def generate_answer_candidates(generator: Any, prompt: str, max_tokens: int, temperature: float, sample_count: int) -> list[str].
+
+    Generate unique answer candidates from the same prompt.
+    """
     requested = max(1, int(sample_count))
     attempts = max(requested, 1)
     if requested > 1:
@@ -65,6 +74,10 @@ def _embedding_relevance_scores(
         embedder: SentenceTransformer,
         normalize_embeddings: bool,
 ) -> list[float]:
+    """Signature: def _embedding_relevance_scores(question: str, candidates: list[str], embedder: SentenceTransformer, normalize_embeddings: bool) -> list[float].
+
+    Embedding relevance scores.
+    """
     query_vector = embedder.encode([question], normalize_embeddings=normalize_embeddings)[0]
     answer_vectors = embedder.encode(candidates, normalize_embeddings=normalize_embeddings)
     return [dot_score(query_vector, vector) for vector in answer_vectors]
@@ -78,6 +91,10 @@ def _embedding_support_scores(
         embedder: SentenceTransformer,
         normalize_embeddings: bool,
 ) -> list[float]:
+    """Signature: def _embedding_support_scores(question: str, candidates: list[str], context_rows: list[dict[str, Any]], support_top_k: int, embedder: SentenceTransformer, normalize_embeddings: bool) -> list[float].
+
+    Embedding support scores.
+    """
     support_rows = [
         str(row.get("text") or "").strip()
         for row in context_rows[: max(1, int(support_top_k))]
@@ -107,6 +124,10 @@ def _cross_encoder_relevance_scores(
         candidates: list[str],
         cross_encoder: Any,
 ) -> list[float]:
+    """Signature: def _cross_encoder_relevance_scores(question: str, candidates: list[str], cross_encoder: Any) -> list[float].
+
+    Cross encoder relevance scores.
+    """
     pairs = [(question, candidate) for candidate in candidates]
     raw_scores = cross_encoder.predict(pairs, show_progress_bar=False)
     return [float(score) for score in raw_scores]
@@ -119,6 +140,10 @@ def _cross_encoder_support_scores(
         support_top_k: int,
         cross_encoder: Any,
 ) -> list[float]:
+    """Signature: def _cross_encoder_support_scores(question: str, candidates: list[str], context_rows: list[dict[str, Any]], support_top_k: int, cross_encoder: Any) -> list[float].
+
+    Cross encoder support scores.
+    """
     support_rows = [
         str(row.get("text") or "").strip()
         for row in context_rows[: max(1, int(support_top_k))]
@@ -150,6 +175,10 @@ def rerank_answer_candidates(
         normalize_embeddings: bool,
         cross_encoder: Any | None,
 ) -> list[dict[str, Any]]:
+    """Signature: def rerank_answer_candidates(question: str, candidates: list[str], context_rows: list[dict[str, Any]], *, config: AnswerSelectionConfig, embedder: SentenceTransformer | None, normalize_embeddings: bool, cross_encoder: Any | None) -> list[dict[str, Any]].
+
+    Score answer candidates by question relevance and context support.
+    """
     unique_candidates = _unique_candidates(candidates)
     if not unique_candidates:
         return []
@@ -235,6 +264,10 @@ def generate_best_answer(
         normalize_embeddings: bool,
         cross_encoder: Any | None,
 ) -> tuple[str, list[dict[str, Any]]]:
+    """Signature: def generate_best_answer(generator: Any, prompt: str, question: str, context_rows: list[dict[str, Any]], *, max_tokens: int, temperature: float, config: AnswerSelectionConfig, embedder: SentenceTransformer | None, normalize_embeddings: bool, cross_encoder: Any | None) -> tuple[str, list[dict[str, Any]]].
+
+    Generate and select the strongest answer for the current prompt.
+    """
     candidates = generate_answer_candidates(
         generator=generator,
         prompt=prompt,

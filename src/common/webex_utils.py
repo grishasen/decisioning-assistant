@@ -9,12 +9,17 @@ from common.text_utils import normalize_whitespace
 
 @dataclass(frozen=True)
 class WebexThreadLine:
+    """Represent a parsed line from a serialized Webex thread."""
     timestamp: str
     author: str
     message_text: str
 
 
 def parse_webex_datetime(value: Any) -> datetime | None:
+    """Signature: def parse_webex_datetime(value: Any) -> datetime | None.
+
+    Parse an ISO-like Webex timestamp string into a datetime.
+    """
     if not value or not isinstance(value, str):
         return None
 
@@ -34,6 +39,10 @@ def format_webex_thread_message_line(
     message_text: str,
     created: datetime | None,
 ) -> str:
+    """Signature: def format_webex_thread_message_line(*, author: str, message_text: str, created: datetime | None) -> str.
+
+    Format one Webex message into the serialized thread line format.
+    """
     cleaned_message = str(message_text or "").strip()
     if not cleaned_message:
         return ""
@@ -44,6 +53,10 @@ def format_webex_thread_message_line(
 
 
 def parse_webex_thread_message_line(line: str) -> WebexThreadLine | None:
+    """Signature: def parse_webex_thread_message_line(line: str) -> WebexThreadLine | None.
+
+    Parse one serialized Webex thread line into structured fields.
+    """
     stripped = str(line or "").strip()
     if not stripped:
         return None
@@ -73,6 +86,10 @@ def parse_webex_thread_message_line(line: str) -> WebexThreadLine | None:
 
 
 def parse_webex_thread_lines(text: str) -> list[WebexThreadLine]:
+    """Signature: def parse_webex_thread_lines(text: str) -> list[WebexThreadLine].
+
+    Parse every serialized Webex thread line from a text block.
+    """
     parsed: list[WebexThreadLine] = []
     for raw_line in str(text or "").splitlines():
         item = parse_webex_thread_message_line(raw_line)

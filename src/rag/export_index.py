@@ -16,6 +16,10 @@ logger = get_logger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
+    """Signature: def parse_args() -> argparse.Namespace.
+
+    Parse CLI arguments for export index.
+    """
     parser = argparse.ArgumentParser(
         description="Export local Qdrant RAG collection into portable files."
     )
@@ -43,6 +47,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def _serialize_vectors_config(vectors: Any) -> dict[str, Any]:
+    """Signature: def _serialize_vectors_config(vectors: Any) -> dict[str, Any].
+
+    Serialize vectors config.
+    """
     if isinstance(vectors, VectorParams):
         distance = vectors.distance.value if hasattr(vectors.distance, "value") else str(vectors.distance)
         return {
@@ -70,16 +78,28 @@ def _serialize_vectors_config(vectors: Any) -> dict[str, Any]:
 
 
 def _json_safe_id(value: Any) -> Any:
+    """Signature: def _json_safe_id(value: Any) -> Any.
+
+    Json safe id.
+    """
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
 
 
 def _normalize_sources(sources: list[str]) -> set[str]:
+    """Signature: def _normalize_sources(sources: list[str]) -> set[str].
+
+    Normalize sources.
+    """
     return {value.strip().lower() for value in sources if value.strip()}
 
 
 def _payload_source_type(payload: Any) -> str:
+    """Signature: def _payload_source_type(payload: Any) -> str.
+
+    Payload source type.
+    """
     if not isinstance(payload, dict):
         return ""
 
@@ -97,6 +117,10 @@ def _payload_source_type(payload: Any) -> str:
 
 
 def main() -> None:
+    """Signature: def main() -> None.
+
+    Run the export index entrypoint.
+    """
     args = parse_args()
     cfg = read_yaml(args.config)
 

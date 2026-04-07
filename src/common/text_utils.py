@@ -41,19 +41,35 @@ _NO_SPLIT_ABBREVIATIONS = {
 
 
 def normalize_whitespace(text: str) -> str:
+    """Signature: def normalize_whitespace(text: str) -> str.
+
+    Collapse repeated whitespace into single spaces.
+    """
     return _WHITESPACE_RE.sub(" ", text).strip()
 
 
 def normalize_newlines(text: str) -> str:
+    """Signature: def normalize_newlines(text: str) -> str.
+
+    Convert Windows and classic Mac newlines to newline characters.
+    """
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def stable_id(*parts: str) -> str:
+    """Signature: def stable_id(*parts: str) -> str.
+
+    Return a stable SHA1-based identifier for the provided parts.
+    """
     digest = hashlib.sha1("||".join(parts).encode("utf-8")).hexdigest()
     return digest
 
 
 def split_text(text: str, chunk_size: int, chunk_overlap: int) -> Iterable[str]:
+    """Signature: def split_text(text: str, chunk_size: int, chunk_overlap: int) -> Iterable[str].
+
+    Split text into overlapping character-based chunks.
+    """
     if chunk_size <= 0:
         raise ValueError("chunk_size must be > 0")
     if chunk_overlap < 0:
@@ -86,6 +102,10 @@ def split_text(text: str, chunk_size: int, chunk_overlap: int) -> Iterable[str]:
 
 
 def split_paragraphs(text: str) -> list[str]:
+    """Signature: def split_paragraphs(text: str) -> list[str].
+
+    Split text into normalized paragraph blocks.
+    """
     normalized = normalize_newlines(text).strip()
     if not normalized:
         return []
@@ -103,6 +123,10 @@ def split_paragraphs(text: str) -> list[str]:
 
 
 def _looks_like_abbreviation(token: str) -> bool:
+    """Signature: def _looks_like_abbreviation(token: str) -> bool.
+
+    Return whether a token looks like an abbreviation that should not end a sentence.
+    """
     cleaned = token.rstrip('"\')]}').lower()
     if cleaned in _NO_SPLIT_ABBREVIATIONS:
         return True
@@ -110,6 +134,10 @@ def _looks_like_abbreviation(token: str) -> bool:
 
 
 def split_sentences(text: str) -> list[str]:
+    """Signature: def split_sentences(text: str) -> list[str].
+
+    Split text into sentences with lightweight punctuation heuristics.
+    """
     normalized = normalize_whitespace(text)
     if not normalized:
         return []
@@ -162,6 +190,10 @@ def split_sentences(text: str) -> list[str]:
 
 
 def _group_sentences(sentences: list[str], target_chars: int) -> list[str]:
+    """Signature: def _group_sentences(sentences: list[str], target_chars: int) -> list[str].
+
+    Group adjacent sentences into chunks near the target length.
+    """
     if not sentences:
         return []
     if target_chars <= 0:
@@ -192,6 +224,10 @@ def pack_paragraphs(
     target_chars: int,
     min_chunk_chars: int,
 ) -> list[str]:
+    """Signature: def pack_paragraphs(paragraphs: list[str], target_chars: int, min_chunk_chars: int) -> list[str].
+
+    Pack whole paragraphs into chunks and only split oversized paragraphs by sentence.
+    """
     if min_chunk_chars < 0:
         raise ValueError("min_chunk_chars must be >= 0")
 
@@ -199,6 +235,10 @@ def pack_paragraphs(
     current: list[str] = []
 
     def flush() -> None:
+        """Signature: def flush() -> None.
+
+        Flush the current paragraph group into the output chunk list.
+        """
         nonlocal current
         combined = "\n\n".join(current).strip()
         if not combined:

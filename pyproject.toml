@@ -33,9 +33,6 @@ dev = [
 pdf_markdown = [
   "pymupdf4llm>=0.0.16",
 ]
-webex = [
-  "webexspacearchive",
-]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

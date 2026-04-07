@@ -25,6 +25,7 @@ _PDF_DATE_RE = re.compile(
 
 @dataclass(frozen=True)
 class SectionRange:
+    """Represent a section boundary detected during PDF ingestion."""
     title: str
     level: int
     start_page: int
@@ -34,6 +35,7 @@ class SectionRange:
 
 @dataclass(frozen=True)
 class ParagraphUnit:
+    """Represent a paragraph-level PDF unit with page and heading metadata."""
     text: str
     page_start: int
     page_end: int
@@ -42,12 +44,17 @@ class ParagraphUnit:
 
 @dataclass
 class ParagraphChunkPlan:
+    """Describe how paragraph units are grouped into one PDF chunk."""
     active_heading: str
     units: list[ParagraphUnit]
     sentence_split_count: int = 0
 
 
 def _parse_pdf_datetime(raw_value: object) -> datetime | None:
+    """Signature: def _parse_pdf_datetime(raw_value: object) -> datetime | None.
+
+    Parse pdf datetime.
+    """
     if not isinstance(raw_value, str):
         return None
 
@@ -76,6 +83,10 @@ def _parse_pdf_datetime(raw_value: object) -> datetime | None:
 
 
 def _extract_sections(pdf_doc: fitz.Document, default_title: str, use_toc: bool) -> list[SectionRange]:
+    """Signature: def _extract_sections(pdf_doc: fitz.Document, default_title: str, use_toc: bool) -> list[SectionRange].
+
+    Extract sections.
+    """
     page_count = len(pdf_doc)
     if page_count == 0:
         return []
@@ -177,6 +188,10 @@ def _extract_sections(pdf_doc: fitz.Document, default_title: str, use_toc: bool)
 
 
 def _looks_like_heading(paragraph: str) -> bool:
+    """Signature: def _looks_like_heading(paragraph: str) -> bool.
+
+    Looks like heading.
+    """
     text = paragraph.strip()
     if not text:
         return False
@@ -202,6 +217,10 @@ def _looks_like_heading(paragraph: str) -> bool:
 
 
 def _extract_page_text_blocks(page: fitz.Page) -> list[str]:
+    """Signature: def _extract_page_text_blocks(page: fitz.Page) -> list[str].
+
+    Extract page text blocks.
+    """
     try:
         raw_blocks = page.get_text("blocks", sort=True) or []
     except TypeError:
@@ -224,6 +243,10 @@ def _extract_page_text_blocks(page: fitz.Page) -> list[str]:
 
 
 def _paragraph_units_from_page(page: fitz.Page, page_no: int) -> list[ParagraphUnit]:
+    """Signature: def _paragraph_units_from_page(page: fitz.Page, page_no: int) -> list[ParagraphUnit].
+
+    Paragraph units from page.
+    """
     units: list[ParagraphUnit] = []
     for block_text in _extract_page_text_blocks(page):
         for paragraph in split_paragraphs(block_text):
@@ -242,6 +265,10 @@ def _extract_section_paragraph_units(
     pdf_doc: fitz.Document,
     section: SectionRange,
 ) -> list[ParagraphUnit]:
+    """Signature: def _extract_section_paragraph_units(pdf_doc: fitz.Document, section: SectionRange) -> list[ParagraphUnit].
+
+    Extract section paragraph units.
+    """
     units: list[ParagraphUnit] = []
     for page_no in range(section.start_page, section.end_page + 1):
         units.extend(_paragraph_units_from_page(pdf_doc[page_no - 1], page_no))
@@ -249,6 +276,10 @@ def _extract_section_paragraph_units(
 
 
 def _expand_oversized_unit(unit: ParagraphUnit, target_chars: int) -> list[ParagraphUnit]:
+    """Signature: def _expand_oversized_unit(unit: ParagraphUnit, target_chars: int) -> list[ParagraphUnit].
+
+    Expand oversized unit.
+    """
     if target_chars <= 0 or len(unit.text) <= target_chars:
         return [unit]
 
@@ -292,6 +323,10 @@ def _expand_oversized_unit(unit: ParagraphUnit, target_chars: int) -> list[Parag
 
 
 def _join_units(units: list[ParagraphUnit]) -> str:
+    """Signature: def _join_units(units: list[ParagraphUnit]) -> str.
+
+    Join units.
+    """
     return "\n\n".join(unit.text for unit in units).strip()
 
 
@@ -301,12 +336,20 @@ def _build_chunk_plans(
     target_chars: int,
     min_chars: int,
 ) -> list[ParagraphChunkPlan]:
+    """Signature: def _build_chunk_plans(section: SectionRange, paragraph_units: list[ParagraphUnit], target_chars: int, min_chars: int) -> list[ParagraphChunkPlan].
+
+    Build chunk plans.
+    """
     plans: list[ParagraphChunkPlan] = []
     current_units: list[ParagraphUnit] = []
     current_heading = section.title
     current_sentence_split_count = 0
 
     def flush() -> None:
+        """Signature: def flush() -> None.
+
+        Flush the current paragraph units into a chunk plan.
+        """
         nonlocal current_units, current_sentence_split_count
         combined = _join_units(current_units)
         if not combined:
@@ -370,6 +413,10 @@ def _build_records_from_units(
     updated_at: datetime | None,
     ingested_at: datetime,
 ) -> list[DocumentRecord]:
+    """Signature: def _build_records_from_units(pdf_path: Path, pdf_doc: fitz.Document, title: str, section: SectionRange, paragraph_units: list[ParagraphUnit], target_chars: int, min_chars: int, split_mode: str, product: str | None, doc_version: str | None, doc_type: str | None, created_at: datetime | None, updated_at: datetime | None, ingested_at: datetime) -> list[DocumentRecord].
+
+    Build records from units.
+    """
     plans = _build_chunk_plans(section, paragraph_units, target_chars, min_chars)
     records: list[DocumentRecord] = []
 
@@ -475,6 +522,10 @@ def _build_section_records(
     updated_at: datetime | None,
     ingested_at: datetime,
 ) -> list[DocumentRecord]:
+    """Signature: def _build_section_records(pdf_path: Path, pdf_doc: fitz.Document, title: str, section: SectionRange, target_chars: int, min_chars: int, product: str | None, doc_version: str | None, doc_type: str | None, created_at: datetime | None, updated_at: datetime | None, ingested_at: datetime) -> list[DocumentRecord].
+
+    Build section records.
+    """
     paragraph_units = _extract_section_paragraph_units(pdf_doc, section)
     if not paragraph_units:
         return []
@@ -506,6 +557,10 @@ def extract_pdf_records(
     doc_version: str | None = None,
     doc_type: str | None = None,
 ) -> list[DocumentRecord]:
+    """Signature: def extract_pdf_records(pdf_path: Path, target_chars: int = 900, min_chars: int = 220, use_toc: bool = True, product: str | None = None, doc_version: str | None = None, doc_type: str | None = None) -> list[DocumentRecord].
+
+    Extract pdf records.
+    """
     records: list[DocumentRecord] = []
     ingested_at = datetime.now(timezone.utc)
 
@@ -582,6 +637,10 @@ def extract_pdf_records(
 
 
 def parse_args() -> argparse.Namespace:
+    """Signature: def parse_args() -> argparse.Namespace.
+
+    Parse CLI arguments for ingest pdfs.
+    """
     parser = argparse.ArgumentParser(
         description="Extract PDFs into structure-aware records (chapters/sections/paragraph blocks)."
     )
@@ -616,6 +675,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Signature: def main() -> None.
+
+    Run the ingest pdfs entrypoint.
+    """
     args = parse_args()
     input_dir = Path(args.input_dir)
     if not input_dir.exists():

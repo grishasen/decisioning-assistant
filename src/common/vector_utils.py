@@ -6,5 +6,8 @@ import numpy as np
 
 
 def dot_score(left: Any, right: Any) -> float:
-    """Return a scalar dot product as a Python float."""
+    """Signature: def dot_score(left: Any, right: Any) -> float.
+
+    Return the dot product between two vectors as a float.
+    """
     return float(np.dot(np.asarray(left), np.asarray(right)))

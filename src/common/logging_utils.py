@@ -4,6 +4,10 @@ import logging
 
 
 def get_logger(name: str) -> logging.Logger:
+    """Signature: def get_logger(name: str) -> logging.Logger.
+
+    Return a logger configured for this package.
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",

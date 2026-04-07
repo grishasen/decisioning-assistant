@@ -10,12 +10,20 @@ logger = get_logger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
+    """Signature: def parse_args() -> argparse.Namespace.
+
+    Parse CLI arguments for fuse adapter.
+    """
     parser = argparse.ArgumentParser(description="Fuse MLX LoRA adapter into a standalone model.")
     parser.add_argument("--config", default="configs/finetune.yaml")
     return parser.parse_args()
 
 
 def main() -> None:
+    """Signature: def main() -> None.
+
+    Run the fuse adapter entrypoint.
+    """
     args = parse_args()
     cfg = read_yaml(args.config)
 

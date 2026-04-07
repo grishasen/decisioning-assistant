@@ -15,6 +15,10 @@ logger = get_logger(__name__)
 
 
 def _load_docs(paths: list[str]) -> list[DocumentRecord]:
+    """Signature: def _load_docs(paths: list[str]) -> list[DocumentRecord].
+
+    Load docs.
+    """
     docs: list[DocumentRecord] = []
     for path in paths:
         source = Path(path)
@@ -30,6 +34,10 @@ def _load_docs(paths: list[str]) -> list[DocumentRecord]:
 
 
 def _make_chunk(doc: DocumentRecord, idx: int, chunk_text: str) -> ChunkRecord:
+    """Signature: def _make_chunk(doc: DocumentRecord, idx: int, chunk_text: str) -> ChunkRecord.
+
+    Create chunk.
+    """
     chunk_id = stable_id(doc.doc_id, str(idx), chunk_text[:120])
     return ChunkRecord(
         chunk_id=chunk_id,
@@ -48,6 +56,10 @@ def _make_chunk(doc: DocumentRecord, idx: int, chunk_text: str) -> ChunkRecord:
 
 
 def _is_single_thread_chunk(doc: DocumentRecord) -> bool:
+    """Signature: def _is_single_thread_chunk(doc: DocumentRecord) -> bool.
+
+    Return whether single thread chunk.
+    """
     if doc.source_type != "webex":
         return False
     if bool(doc.metadata.get("is_thread_document")):
@@ -56,6 +68,10 @@ def _is_single_thread_chunk(doc: DocumentRecord) -> bool:
 
 
 def _ensure_webex_thread_starts_with_root(doc: DocumentRecord, text: str) -> str:
+    """Signature: def _ensure_webex_thread_starts_with_root(doc: DocumentRecord, text: str) -> str.
+
+    Ensure webex thread starts with root.
+    """
     if not _is_single_thread_chunk(doc):
         return text
 
@@ -77,6 +93,10 @@ def _ensure_webex_thread_starts_with_root(doc: DocumentRecord, text: str) -> str
 
 
 def _is_prechunked_pdf(doc: DocumentRecord) -> bool:
+    """Signature: def _is_prechunked_pdf(doc: DocumentRecord) -> bool.
+
+    Return whether prechunked pdf.
+    """
     if doc.source_type != "pdf":
         return False
     split_mode = str(doc.metadata.get("split_mode", "")).strip().lower()
@@ -88,6 +108,10 @@ def _chunk_pdf_doc(
     chunk_size: int,
     min_chunk_chars: int,
 ) -> list[str]:
+    """Signature: def _chunk_pdf_doc(doc: DocumentRecord, chunk_size: int, min_chunk_chars: int) -> list[str].
+
+    Chunk pdf doc.
+    """
     text = doc.text.strip()
     if not text:
         return []
@@ -106,6 +130,10 @@ def _chunk_docs(
     chunk_overlap: int,
     min_chunk_chars: int,
 ) -> list[ChunkRecord]:
+    """Signature: def _chunk_docs(docs: list[DocumentRecord], chunk_size: int, chunk_overlap: int, min_chunk_chars: int) -> list[ChunkRecord].
+
+    Chunk docs.
+    """
     chunks: list[ChunkRecord] = []
     for doc in tqdm(docs, desc="Chunking docs"):
         if _is_single_thread_chunk(doc):
@@ -138,12 +166,20 @@ def _chunk_docs(
 
 
 def parse_args() -> argparse.Namespace:
+    """Signature: def parse_args() -> argparse.Namespace.
+
+    Parse CLI arguments for normalize docs.
+    """
     parser = argparse.ArgumentParser(description="Combine + chunk documents into canonical docs/chunks JSONL.")
     parser.add_argument("--config", default="configs/sources.yaml")
     return parser.parse_args()
 
 
 def main() -> None:
+    """Signature: def main() -> None.
+
+    Run the normalize docs entrypoint.
+    """
     args = parse_args()
     config = read_yaml(args.config)
     normalize_cfg: dict[str, Any] = config.get("normalize", {})

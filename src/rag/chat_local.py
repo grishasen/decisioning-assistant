@@ -11,6 +11,7 @@ from rag.prompt_budget import (
     clip_text,
     clip_text_to_tokens,
     format_context,
+    normalize_prompt_mode,
     select_context_rows,
 )
 from rag.retrieve import (
@@ -21,6 +22,10 @@ from rag.retrieve import (
 
 
 def parse_args() -> argparse.Namespace:
+    """Signature: def parse_args() -> argparse.Namespace.
+
+    Parse CLI arguments for chat local.
+    """
     parser = argparse.ArgumentParser(
         description="Ask a local model with local retrieval context."
     )
@@ -33,6 +38,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Signature: def main() -> None.
+
+    Run the chat local entrypoint.
+    """
     args = parse_args()
 
     rag_cfg = read_yaml(args.rag_config)
@@ -73,10 +82,11 @@ def main() -> None:
         support_top_k=max(1, int(rag_cfg.get("answer_rerank_support_top_k", 3))),
     )
     reranker_model = str(rag_cfg.get("reranker_model", "BAAI/bge-reranker-base"))
+    prompt_mode = normalize_prompt_mode(str(rag_cfg.get("prompt_mode", "grounded")))
 
     adapter_path = args.adapter_path or answer_cfg.get("adapter_path") or None
 
-    prompt = build_rag_prompt(args.question, context=context, history="")
+    prompt = build_rag_prompt(args.question, context=context, history="", prompt_mode=prompt_mode)
     prompt = clip_text(prompt, max_prompt_chars)
     prompt = clip_text_to_tokens(prompt, max_prompt_tokens)
 

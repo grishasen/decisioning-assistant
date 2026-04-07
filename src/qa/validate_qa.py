@@ -16,16 +16,28 @@ _WORD_RE = re.compile(r"[a-zA-Z0-9']+")
 
 
 def parse_args() -> argparse.Namespace:
+    """Signature: def parse_args() -> argparse.Namespace.
+
+    Parse CLI arguments for validate qa.
+    """
     parser = argparse.ArgumentParser(description="Validate and clean generated QA data.")
     parser.add_argument("--qa-config", default="configs/qa_generation.yaml")
     return parser.parse_args()
 
 
 def _tokens(text: str) -> set[str]:
+    """Signature: def _tokens(text: str) -> set[str].
+
+    Handle tokens.
+    """
     return {w.lower() for w in _WORD_RE.findall(text) if len(w) >= 4}
 
 
 def _overlap_ratio(answer: str, context: str) -> float:
+    """Signature: def _overlap_ratio(answer: str, context: str) -> float.
+
+    Overlap ratio.
+    """
     a = _tokens(answer)
     c = _tokens(context)
     if not a or not c:
@@ -34,6 +46,10 @@ def _overlap_ratio(answer: str, context: str) -> float:
 
 
 def main() -> None:
+    """Signature: def main() -> None.
+
+    Run the validate qa entrypoint.
+    """
     args = parse_args()
     qa_cfg = read_yaml(args.qa_config)
 

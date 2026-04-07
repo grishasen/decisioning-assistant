@@ -6,6 +6,11 @@
 # Hybrid indexing corpus:
 # - chunks from source documents
 # - synthetic QA pairs generated from those chunks
+# Prompt mode for final answer generation.
+# grounded: recommended for reliable advisory RAG
+# legacy_reasoning: keeps the previous <think>-style prompt behavior
+prompt_mode: grounded
+
 chunks_path: data/staging/chunks/chunks.jsonl
 include_qa: true
 qa_path: data/qa/qa_clean.jsonl
@@ -17,6 +22,14 @@ qdrant_path: data/rag/vectordb
 collection_name: docs
 embedding_model: BAAI/bge-base-en-v1.5
 normalize_embeddings: true
+
+# Add short metadata context to retrieval text at index time.
+# Raw text is still preserved for prompt context and source popups.
+contextualize_index_text: true
+contextual_index_max_prefix_chars: 320
+contextualize_pdf_chunks: true
+contextualize_webex_chunks: true
+contextualize_qa_pairs: true
 
 # Retrieval defaults + UI bounds.
 top_k: 8

@@ -13,6 +13,10 @@ logger = get_logger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
+    """Signature: def parse_args() -> argparse.Namespace.
+
+    Parse CLI arguments for run lora.
+    """
     parser = argparse.ArgumentParser(description="Run MLX LoRA fine-tuning with config-driven settings.")
     parser.add_argument("--config", default="configs/finetune.yaml")
     parser.add_argument("--dry-run", action="store_true")
@@ -29,12 +33,20 @@ def parse_args() -> argparse.Namespace:
 
 
 def _append_arg(cmd: list[str], key: str, value: Any) -> None:
+    """Signature: def _append_arg(cmd: list[str], key: str, value: Any) -> None.
+
+    Append arg.
+    """
     if value is None:
         return
     cmd.extend([f"--{key}", str(value)])
 
 
 def _append_extra_args(cmd: list[str], cfg: dict[str, Any]) -> None:
+    """Signature: def _append_extra_args(cmd: list[str], cfg: dict[str, Any]) -> None.
+
+    Append extra arguments.
+    """
     extra_args = cfg.get("extra_args")
     if isinstance(extra_args, str) and extra_args.strip():
         cmd.extend(shlex.split(extra_args))
@@ -43,7 +55,10 @@ def _append_extra_args(cmd: list[str], cfg: dict[str, Any]) -> None:
 
 
 def build_legacy_command(cfg: dict[str, Any]) -> list[str]:
-    """Fallback command builder for mlx_lm versions without --config support."""
+    """Signature: def build_legacy_command(cfg: dict[str, Any]) -> list[str].
+
+    Fallback command builder for mlx_lm versions without --config support.
+    """
     cmd: list[str] = ["mlx_lm.lora"]
 
     _append_arg(cmd, "model", cfg.get("model"))
@@ -76,6 +91,10 @@ def build_legacy_command(cfg: dict[str, Any]) -> list[str]:
 
 
 def build_command(cfg: dict[str, Any], config_path: Path, use_config_file: bool) -> list[str]:
+    """Signature: def build_command(cfg: dict[str, Any], config_path: Path, use_config_file: bool) -> list[str].
+
+    Build command.
+    """
     if use_config_file:
         cmd = ["mlx_lm.lora", "--config", str(config_path)]
         _append_extra_args(cmd, cfg)
@@ -85,6 +104,10 @@ def build_command(cfg: dict[str, Any], config_path: Path, use_config_file: bool)
 
 
 def main() -> None:
+    """Signature: def main() -> None.
+
+    Run the run lora entrypoint.
+    """
     args = parse_args()
     config_path = Path(args.config).expanduser().resolve()
     cfg = read_yaml(str(config_path))

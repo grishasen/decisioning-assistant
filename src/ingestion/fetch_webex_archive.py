@@ -32,6 +32,7 @@ NEXT_LINK_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
 
 @dataclass(frozen=True)
 class FetchPolicy:
+    """Store time bounds and message limits for a Webex fetch run."""
     after: datetime | None = None
     before: datetime | None = None
     total_limit: int | None = DEFAULT_TOTAL_LIMIT
@@ -40,11 +41,16 @@ class FetchPolicy:
 
 @dataclass(frozen=True)
 class RoomSpec:
+    """Represent a Webex room selected for archiving."""
     room_id: str
     title: str
 
 
 def parse_args() -> argparse.Namespace:
+    """Signature: def parse_args() -> argparse.Namespace.
+
+    Parse CLI arguments for fetch webex archive.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Fetch raw Webex space messages directly through the Webex REST API. "
@@ -85,15 +91,27 @@ def parse_args() -> argparse.Namespace:
 
 
 def _parse_webex_timestamp(value: Any) -> datetime | None:
+    """Signature: def _parse_webex_timestamp(value: Any) -> datetime | None.
+
+    Parse webex timestamp.
+    """
     return parse_webex_datetime(value)
 
 
 def _format_webex_timestamp(value: datetime) -> str:
+    """Signature: def _format_webex_timestamp(value: datetime) -> str.
+
+    Format webex timestamp.
+    """
     normalized = value.astimezone(timezone.utc).replace(microsecond=0)
     return normalized.isoformat().replace("+00:00", "Z")
 
 
 def _parse_compact_date(value: str) -> datetime:
+    """Signature: def _parse_compact_date(value: str) -> datetime.
+
+    Parse compact date.
+    """
     parsed = datetime.strptime(value, "%d%m%Y")
     return parsed.replace(tzinfo=timezone.utc)
 
@@ -103,6 +121,10 @@ def _parse_max_total_messages(
         *,
         now: datetime | None = None,
 ) -> FetchPolicy:
+    """Signature: def _parse_max_total_messages(raw_value: str | None, *, now: datetime | None = None) -> FetchPolicy.
+
+    Parse max total messages.
+    """
     cleaned = (raw_value or "").strip()
     if not cleaned:
         return FetchPolicy(total_limit=DEFAULT_TOTAL_LIMIT)
@@ -138,6 +160,10 @@ def _parse_max_total_messages(
 
 
 def _load_fetch_config(path: Path) -> dict[str, Any]:
+    """Signature: def _load_fetch_config(path: Path) -> dict[str, Any].
+
+    Load fetch config.
+    """
     config = read_yaml(path)
     unknown_keys = sorted(set(config) - ALLOWED_CONFIG_KEYS)
     if unknown_keys:
@@ -148,6 +174,10 @@ def _load_fetch_config(path: Path) -> dict[str, Any]:
 
 
 def _resolve_token(config: dict[str, Any]) -> str:
+    """Signature: def _resolve_token(config: dict[str, Any]) -> str.
+
+    Resolve token.
+    """
     token = str(config.get("token") or "").strip()
     if token:
         return token
@@ -163,6 +193,10 @@ def _resolve_token(config: dict[str, Any]) -> str:
 
 
 def _load_room_specs(path: Path, room_type: str = "group") -> list[RoomSpec]:
+    """Signature: def _load_room_specs(path: Path, room_type: str = 'group') -> list[RoomSpec].
+
+    Load room specs.
+    """
     payload = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(payload, dict):
         items = payload.get("items", [])
@@ -194,6 +228,10 @@ def _load_room_specs(path: Path, room_type: str = "group") -> list[RoomSpec]:
 
 
 def _extract_next_link(header_value: str) -> str | None:
+    """Signature: def _extract_next_link(header_value: str) -> str | None.
+
+    Extract next link.
+    """
     if not header_value:
         return None
 
@@ -205,6 +243,10 @@ def _extract_next_link(header_value: str) -> str | None:
 
 
 def _request_json(url: str, token: str) -> tuple[Any, dict[str, str]]:
+    """Signature: def _request_json(url: str, token: str) -> tuple[Any, dict[str, str]].
+
+    Request json.
+    """
     last_error: Exception | None = None
     for attempt in range(5):
         request = Request(
@@ -252,6 +294,10 @@ def _request_json(url: str, token: str) -> tuple[Any, dict[str, str]]:
 
 
 def _build_messages_url(room_id: str, page_size: int, before: datetime | None) -> str:
+    """Signature: def _build_messages_url(room_id: str, page_size: int, before: datetime | None) -> str.
+
+    Build messages url.
+    """
     params = [("roomId", room_id), ("max", str(page_size))]
     if before is not None:
         params.append(("before", _format_webex_timestamp(before)))
@@ -264,6 +310,10 @@ def _fetch_room_messages(
         policy: FetchPolicy,
         page_size: int,
 ) -> list[dict[str, Any]]:
+    """Signature: def _fetch_room_messages(room_id: str, token: str, policy: FetchPolicy, page_size: int) -> list[dict[str, Any]].
+
+    Fetch room messages.
+    """
     effective_page_size = max(1, min(int(page_size), 500))
     if policy.total_limit is not None and policy.total_limit <= 0:
         return []
@@ -308,11 +358,19 @@ def _fetch_room_messages(
 
 
 def _normalize_room_title(title: str) -> str:
+    """Signature: def _normalize_room_title(title: str) -> str.
+
+    Normalize room title.
+    """
     cleaned = " ".join(title.split()).strip()
     return cleaned or "Webex Space"
 
 
 def _build_output_basename(title: str, room_id: str, used_names: set[str]) -> str:
+    """Signature: def _build_output_basename(title: str, room_id: str, used_names: set[str]) -> str.
+
+    Build output basename.
+    """
     normalized_title = _normalize_room_title(title)
     base_name = FILENAME_SANITIZE_RE.sub("_", normalized_title)
     base_name = re.sub(r"_+", "_", base_name).strip("._-") or "room"
@@ -331,6 +389,10 @@ def _build_output_basename(title: str, room_id: str, used_names: set[str]) -> st
 
 
 def _resolve_room_specs(rooms_json: str, room_type: str) -> list[RoomSpec]:
+    """Signature: def _resolve_room_specs(rooms_json: str, room_type: str) -> list[RoomSpec].
+
+    Resolve room specs.
+    """
     rooms = _load_room_specs(Path(rooms_json), room_type=room_type)
     if not rooms:
         raise ValueError(f"No rooms of type '{room_type}' were found in {rooms_json}.")
@@ -339,6 +401,10 @@ def _resolve_room_specs(rooms_json: str, room_type: str) -> list[RoomSpec]:
 
 
 def main() -> None:
+    """Signature: def main() -> None.
+
+    Run the fetch webex archive entrypoint.
+    """
     args = parse_args()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

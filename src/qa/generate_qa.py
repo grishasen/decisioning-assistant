@@ -23,6 +23,10 @@ logger = get_logger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
+    """Signature: def parse_args() -> argparse.Namespace.
+
+    Parse CLI arguments for generate qa.
+    """
     parser = argparse.ArgumentParser(
         description="Generate synthetic QA from chunked documents."
     )
@@ -32,12 +36,21 @@ def parse_args() -> argparse.Namespace:
 
 
 class _ChunkIterator:
+    """Iterate over validated chunk records with a stable reported length."""
     def __init__(self, path: str, limit: int):
+        """Signature: def __init__(self, path: str, limit: int).
+
+        Initialize the instance state.
+        """
         self.path = path
         self.limit = limit
         self._length: int | None = None
 
     def __iter__(self) -> Iterator[ChunkRecord]:
+        """Signature: def __iter__(self) -> Iterator[ChunkRecord].
+
+        Iterate over the items exposed by this object.
+        """
         count = 0
         for row in iter_jsonl(self.path):
             yield ChunkRecord.model_validate(row)
@@ -46,6 +59,10 @@ class _ChunkIterator:
                 break
 
     def __len__(self) -> int:
+        """Signature: def __len__(self) -> int.
+
+        Return the number of items exposed by this object.
+        """
         if self._length is None:
             total = count_iter_jsonl(self.path)
             if self.limit > 0:
@@ -55,10 +72,18 @@ class _ChunkIterator:
 
 
 def _iter_chunks(path: str, limit: int) -> _ChunkIterator:
+    """Signature: def _iter_chunks(path: str, limit: int) -> _ChunkIterator.
+
+    Iterate over chunks.
+    """
     return _ChunkIterator(path, limit)
 
 
 def _iter_jsonl_rows_safe(path: str):
+    """Signature: def _iter_jsonl_rows_safe(path: str).
+
+    Iterate over jsonl rows safe.
+    """
     file_path = Path(path).expanduser()
     if not file_path.exists():
         return
@@ -79,6 +104,10 @@ def _iter_jsonl_rows_safe(path: str):
 
 
 def _load_processed_chunk_ids(output_raw_qa: str, qa_progress_path: str) -> set[str]:
+    """Signature: def _load_processed_chunk_ids(output_raw_qa: str, qa_progress_path: str) -> set[str].
+
+    Load processed chunk IDs from raw QA output and progress state files.
+    """
     processed_from_output: set[str] = set()
     processed_from_progress: set[str] = set()
 
@@ -107,6 +136,10 @@ def _load_processed_chunk_ids(output_raw_qa: str, qa_progress_path: str) -> set[
 
 
 def _reset_resume_artifacts(output_raw_qa: str, qa_progress_path: str) -> None:
+    """Signature: def _reset_resume_artifacts(output_raw_qa: str, qa_progress_path: str) -> None.
+
+    Reset resume artifacts.
+    """
     for path in (output_raw_qa, qa_progress_path):
         file_path = Path(path).expanduser()
         if file_path.exists():
@@ -118,6 +151,10 @@ def _has_pending_chunks(
         limit: int,
         processed_chunk_ids: set[str],
 ) -> bool:
+    """Signature: def _has_pending_chunks(input_chunks: str, limit: int, processed_chunk_ids: set[str]) -> bool.
+
+    Return whether pending chunks.
+    """
     for chunk in _iter_chunks(input_chunks, limit):
         if chunk.chunk_id not in processed_chunk_ids:
             return True
@@ -130,6 +167,10 @@ def _record_chunk_progress(
         status: str,
         qa_row_count: int,
 ) -> None:
+    """Signature: def _record_chunk_progress(qa_progress_path: str, chunk: ChunkRecord, status: str, qa_row_count: int) -> None.
+
+    Record chunk progress.
+    """
     append_jsonl(
         qa_progress_path,
         [
@@ -146,6 +187,10 @@ def _record_chunk_progress(
 
 
 def _extract_qa_pairs(model_output: str) -> list[dict[str, str]]:
+    """Signature: def _extract_qa_pairs(model_output: str) -> list[dict[str, str]].
+
+    Extract normalized QA pairs from the model output JSON payload.
+    """
     payload = extract_first_json_object(model_output)
     if not payload:
         return []
@@ -168,6 +213,10 @@ def _extract_qa_pairs(model_output: str) -> list[dict[str, str]]:
 
 
 def _extract_question(model_output: str) -> str:
+    """Signature: def _extract_question(model_output: str) -> str.
+
+    Extract the generated question text from the model output.
+    """
     payload = extract_first_json_object(model_output)
     if isinstance(payload, dict):
         question = payload.get("question")
@@ -184,12 +233,20 @@ def _extract_question(model_output: str) -> str:
 
 
 def _is_webex_chunk(chunk: ChunkRecord) -> bool:
+    """Signature: def _is_webex_chunk(chunk: ChunkRecord) -> bool.
+
+    Return whether webex chunk.
+    """
     if chunk.source_type.strip().lower() == "webex":
         return True
     return chunk.source_ref.strip().lower().startswith("webex::")
 
 
 def _is_webex_thread_chunk(chunk: ChunkRecord) -> bool:
+    """Signature: def _is_webex_thread_chunk(chunk: ChunkRecord) -> bool.
+
+    Return whether webex thread chunk.
+    """
     if not _is_webex_chunk(chunk):
         return False
     metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
@@ -199,16 +256,28 @@ def _is_webex_thread_chunk(chunk: ChunkRecord) -> bool:
 
 
 def _normalize_match_value(value: Any) -> str:
+    """Signature: def _normalize_match_value(value: Any) -> str.
+
+    Normalize match value.
+    """
     if not isinstance(value, str):
         return ""
     return normalize_whitespace(value).lower()
 
 
 def _webex_thread_messages(chunk: ChunkRecord) -> list[WebexThreadLine]:
+    """Signature: def _webex_thread_messages(chunk: ChunkRecord) -> list[WebexThreadLine].
+
+    Webex thread messages.
+    """
     return parse_webex_thread_lines(chunk.text)
 
 
 def _webex_thread_replies(chunk: ChunkRecord) -> list[WebexThreadLine]:
+    """Signature: def _webex_thread_replies(chunk: ChunkRecord) -> list[WebexThreadLine].
+
+    Webex thread replies.
+    """
     lines = _webex_thread_messages(chunk)
     if len(lines) <= 1:
         return []
@@ -216,6 +285,10 @@ def _webex_thread_replies(chunk: ChunkRecord) -> list[WebexThreadLine]:
 
 
 def _webex_chunk_matches_user(chunk: ChunkRecord, normalized_user_name: str) -> bool:
+    """Signature: def _webex_chunk_matches_user(chunk: ChunkRecord, normalized_user_name: str) -> bool.
+
+    Webex chunk matches user.
+    """
     if not normalized_user_name:
         return True
 
@@ -248,6 +321,10 @@ def _build_webex_thread_answer(
         chunk: ChunkRecord,
         normalized_user_name: str = "",
 ) -> tuple[str, str, int] | None:
+    """Signature: def _build_webex_thread_answer(chunk: ChunkRecord, normalized_user_name: str = '') -> tuple[str, str, int] | None.
+
+    Build a Webex thread answer from the matching reply messages.
+    """
     metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
     thread_start_text = normalize_whitespace(str(metadata.get("thread_start_text") or ""))
 
@@ -283,6 +360,10 @@ def _generate_webex_thread_question(
         temperature: float,
         normalized_user_name: str = "",
 ) -> dict[str, str] | None:
+    """Signature: def _generate_webex_thread_question(generator: MLXLoadedGenerator, chunk: ChunkRecord, max_tokens: int, temperature: float, normalized_user_name: str = '') -> dict[str, str] | None.
+
+    Generate webex thread question.
+    """
     thread_parts = _build_webex_thread_answer(
         chunk,
         normalized_user_name=normalized_user_name,
@@ -309,6 +390,10 @@ def _generate_webex_thread_question(
 
 
 def main() -> None:
+    """Signature: def main() -> None.
+
+    Generate QA pairs for chunks and write resumable progress files.
+    """
     args = parse_args()
     qa_cfg = read_yaml(args.qa_config)
     model_cfg = read_yaml(args.models_config)
