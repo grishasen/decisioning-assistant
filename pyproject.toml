@@ -33,6 +33,9 @@ dev = [
 pdf_markdown = [
   "pymupdf4llm>=0.0.16",
 ]
+vlm = [
+  "mlx-vlm>=0.4.4",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

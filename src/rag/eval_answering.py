@@ -75,6 +75,7 @@ def main() -> None:
         model=str(answer_cfg.get("model")),
         adapter_path=(args.adapter_path or answer_cfg.get("adapter_path") or None),
         trust_remote_code=bool(answer_cfg.get("trust_remote_code", True)),
+        provider=str(answer_cfg.get("provider", "mlx")),
     )
 
     answer_sel_cfg = AnswerSelectionConfig(

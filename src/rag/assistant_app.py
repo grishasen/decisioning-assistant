@@ -52,6 +52,7 @@ class RetrievalConfig:
 @dataclass(frozen=True)
 class GenerationConfig:
     """Store runtime generation settings for the Streamlit app."""
+    provider: str
     model_name: str
     max_tokens: int
     temperature: float
@@ -98,6 +99,7 @@ def _load_generator(cfg: GenerationConfig) -> MLXLoadedGenerator:
         model=cfg.model_name,
         adapter_path=cfg.adapter_path,
         trust_remote_code=cfg.trust_remote_code,
+        provider=cfg.provider,
     )
 
 
@@ -318,6 +320,7 @@ def main() -> None:
         clear_chat = st.button("Clear Chat History 🗑️")
 
     model_name = str(answer_cfg.get("model"))
+    provider = str(answer_cfg.get("provider", "mlx"))
     max_tokens = int(answer_cfg.get("max_tokens", 256))
     temperature = float(answer_cfg.get("temperature", 0.2))
     trust_remote_code = bool(answer_cfg.get("trust_remote_code", True))
@@ -677,6 +680,7 @@ def main() -> None:
             )
 
         st.markdown(f"**Model**: `{model_name}`")
+        st.caption(f"Generation provider: {provider}")
         st.caption(
             "Retrieval: "
             f"fetch_k={fetch_k}, mode={rerank_mode}, threshold={score_threshold:.2f}, "
@@ -739,6 +743,7 @@ def main() -> None:
         support_top_k=answer_rerank_support_top_k,
     )
     gen_cfg = GenerationConfig(
+        provider=provider,
         model_name=model_name,
         max_tokens=max_tokens,
         temperature=temperature,

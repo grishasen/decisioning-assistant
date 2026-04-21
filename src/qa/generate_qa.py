@@ -423,6 +423,7 @@ def main() -> None:
     normalized_webex_user_name = _normalize_match_value(webex_user_name)
 
     qa_model_cfg: dict[str, Any] = model_cfg.get("qa_generator", {})
+    provider = str(qa_model_cfg.get("provider", "mlx"))
     model_name = str(qa_model_cfg.get("model", "mlx-community/gemma-2-2b-it-4bit"))
     adapter_path = qa_model_cfg.get("adapter_path")
     trust_remote_code = bool(qa_model_cfg.get("trust_remote_code", True))
@@ -497,6 +498,7 @@ def main() -> None:
         model=model_name,
         adapter_path=str(adapter_path) if adapter_path else None,
         trust_remote_code=trust_remote_code,
+        provider=provider,
     )
 
     resumed_skipped_chunks = 0

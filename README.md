@@ -81,6 +81,11 @@ Optional developer tools:
 pip install -e .[dev]
 ```
 
+Optional VLM model support for Gemma 4 and other MLX-VLM checkpoints:
+```bash
+pip install -e .[vlm]
+```
+
 ## Main Configuration Files
 - `configs/sources.yaml`: PDF and Webex ingestion paths plus normalization/chunking settings.
 - `configs/models.yaml`: QA generator, answer model, and embedding model settings.
@@ -88,6 +93,12 @@ pip install -e .[dev]
 - `configs/finetune.yaml`: MLX LoRA fine-tuning settings.
 - `configs/rag.yaml`: indexing, retrieval, reranking, answer selection, and prompt-budget settings.
 - `configs/webex_fetch.yaml`: direct Webex API fetch settings.
+
+Larger machine profiles are available alongside the defaults:
+- `configs/models.m5_pro_64gb.yaml`: larger MLX-LM generation profile.
+- `configs/models.m5_pro_64gb.gemma4.yaml`: Gemma 4 MLX-VLM generation profile.
+- `configs/rag.m5_pro_64gb.yaml`: larger retrieval/context profile.
+- `configs/qa_generation.m5_pro_64gb.yaml`: denser QA generation profile.
 
 ## Typical End-to-End Workflow
 1. Fetch raw Webex spaces if needed.
@@ -192,6 +203,30 @@ The app provides:
 - source popups with retrieved text,
 - Webex room timestamp display,
 - Webex parent-message deep links when available.
+
+## MLX-VLM and Gemma 4
+Gemma 4 MLX checkpoints use `mlx-vlm`, so set `provider: mlx_vlm` in the relevant
+`qa_generator` or `answer_model` config block. The text-only MLX path remains
+`provider: mlx` or `provider: mlx_lm`.
+
+Example:
+```yaml
+answer_model:
+  provider: mlx_vlm
+  model: mlx-community/gemma-4-26b-a4b-it-mxfp4
+  max_tokens: 2048
+  temperature: 0.15
+  trust_remote_code: true
+```
+
+The `rag.chat_local` CLI can also pass media to VLM models:
+```bash
+PYTHONPATH=src python3 -m rag.chat_local \
+  "What does this screenshot show?" \
+  --rag-config configs/rag.m5_pro_64gb.yaml \
+  --models-config configs/models.m5_pro_64gb.gemma4.yaml \
+  --image /path/to/screenshot.png
+```
 
 ## Export and Import
 Portable RAG bundles can be moved to another machine.

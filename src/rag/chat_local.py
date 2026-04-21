@@ -34,6 +34,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--models-config", default="configs/models.yaml")
     parser.add_argument("--adapter-path", default="")
     parser.add_argument("--top-k", type=int, default=0)
+    parser.add_argument(
+        "--image",
+        action="append",
+        default=[],
+        help="Optional image path or URL to pass to provider=mlx_vlm models. Repeat for multiple images.",
+    )
+    parser.add_argument(
+        "--audio",
+        action="append",
+        default=[],
+        help="Optional audio path or URL to pass to provider=mlx_vlm models. Repeat for multiple audio files.",
+    )
     return parser.parse_args()
 
 
@@ -70,6 +82,7 @@ def main() -> None:
     context = format_context(selected_rows)
 
     answer_cfg: dict[str, Any] = model_cfg.get("answer_model", {})
+    provider = str(answer_cfg.get("provider", "mlx"))
     model_name = str(answer_cfg.get("model"))
     max_tokens = int(answer_cfg.get("max_tokens", 256))
     temperature = float(answer_cfg.get("temperature", 0.2))
@@ -94,6 +107,7 @@ def main() -> None:
         model=model_name,
         adapter_path=str(adapter_path) if adapter_path else None,
         trust_remote_code=trust_remote_code,
+        provider=provider,
     )
 
     answer_embedder, answer_cross_encoder = resolve_answer_rerank_resources(
@@ -114,6 +128,8 @@ def main() -> None:
         embedder=answer_embedder,
         normalize_embeddings=retriever.normalize_embeddings,
         cross_encoder=answer_cross_encoder,
+        images=args.image or None,
+        audio=args.audio or None,
     )
 
     print("Answer:\n")

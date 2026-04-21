@@ -39,6 +39,8 @@ def generate_answer_candidates(
         max_tokens: int,
         temperature: float,
         sample_count: int,
+        images: str | list[str] | tuple[str, ...] | None = None,
+        audio: str | list[str] | tuple[str, ...] | None = None,
 ) -> list[str]:
     """Signature: def generate_answer_candidates(generator: Any, prompt: str, max_tokens: int, temperature: float, sample_count: int) -> list[str].
 
@@ -56,6 +58,8 @@ def generate_answer_candidates(
                 prompt=prompt,
                 max_tokens=max_tokens,
                 temperature=temperature,
+                images=images,
+                audio=audio,
             )
         )
         unique = _unique_candidates(raw_candidates)
@@ -263,6 +267,8 @@ def generate_best_answer(
         embedder: SentenceTransformer | None,
         normalize_embeddings: bool,
         cross_encoder: Any | None,
+        images: str | list[str] | tuple[str, ...] | None = None,
+        audio: str | list[str] | tuple[str, ...] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Signature: def generate_best_answer(generator: Any, prompt: str, question: str, context_rows: list[dict[str, Any]], *, max_tokens: int, temperature: float, config: AnswerSelectionConfig, embedder: SentenceTransformer | None, normalize_embeddings: bool, cross_encoder: Any | None) -> tuple[str, list[dict[str, Any]]].
 
@@ -274,6 +280,8 @@ def generate_best_answer(
         max_tokens=max_tokens,
         temperature=temperature,
         sample_count=config.sample_count,
+        images=images,
+        audio=audio,
     )
     ranked_candidates = rerank_answer_candidates(
         question=question,

@@ -74,6 +74,7 @@ def main() -> None:
     models_cfg = read_yaml(args.models_config)
     answer_cfg: dict[str, Any] = models_cfg.get("answer_model", {})
 
+    provider = str(answer_cfg.get("provider", "mlx"))
     model = str(answer_cfg.get("model", "mlx-community/gemma-2-2b-it-4bit"))
     max_tokens = int(answer_cfg.get("max_tokens", 400))
     temperature = float(answer_cfg.get("temperature", 0.2))
@@ -92,6 +93,7 @@ def main() -> None:
         model=model,
         adapter_path=str(adapter_path) if adapter_path else None,
         trust_remote_code=trust_remote_code,
+        provider=provider,
     )
 
     scores: list[float] = []
