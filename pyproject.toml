@@ -36,6 +36,9 @@ pdf_markdown = [
 vlm = [
   "mlx-vlm>=0.4.4",
 ]
+turboquant = [
+  "turboquant-mlx-full>=0.1.2",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

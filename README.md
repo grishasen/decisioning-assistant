@@ -86,6 +86,11 @@ Optional VLM model support for Gemma 4 and other MLX-VLM checkpoints:
 pip install -e .[vlm]
 ```
 
+Optional TurboQuant model conversion and runtime support:
+```bash
+pip install -e .[turboquant]
+```
+
 ## Main Configuration Files
 - `configs/sources.yaml`: PDF and Webex ingestion paths plus normalization/chunking settings.
 - `configs/models.yaml`: QA generator, answer model, and embedding model settings.
@@ -227,6 +232,45 @@ PYTHONPATH=src python3 -m rag.chat_local \
   --models-config configs/models.m5_pro_64gb.gemma4.yaml \
   --image /path/to/screenshot.png
 ```
+
+## TurboQuant MLX
+TurboQuant-compressed MLX models can be converted and used by the same QA,
+evaluation, local chat, and Streamlit app paths as standard MLX-LM models.
+
+Convert the configured `answer_model`:
+```bash
+decisioning-assistant turboquant-convert \
+  --models-config configs/models.yaml \
+  --model-key answer_model \
+  --mlx-path data/models/answer-model-tq3 \
+  --bits 3 \
+  --group-size 64
+```
+
+Or convert an explicit HuggingFace/local model:
+```bash
+decisioning-assistant turboquant-convert \
+  --hf-path openai/gpt-oss-20b \
+  --mlx-path data/models/gpt-oss-20b-tq3 \
+  --bits 3 \
+  --group-size 64
+```
+
+Point the app at the converted model with `provider: turboquant_mlx`:
+```yaml
+answer_model:
+  provider: turboquant_mlx
+  model: data/models/answer-model-tq3
+  max_tokens: 2048
+  temperature: 0.15
+  turboquant_kv_bits: 3
+  turboquant_kv_group_size: 64
+```
+
+Set `turboquant_kv_bits` to `0` or omit it to use the TurboQuant weight-compressed
+model with the normal FP16 KV cache. Use `turboquant_fast: true` only for
+converted models that include QJL correction and where speed is preferred over
+the highest-quality decode.
 
 ## Export and Import
 Portable RAG bundles can be moved to another machine.

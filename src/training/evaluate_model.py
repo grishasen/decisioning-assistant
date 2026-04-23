@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from common.io_utils import iter_jsonl, read_yaml
 from common.logging_utils import get_logger
-from common.mlx_utils import MLXLoadedGenerator
+from common.mlx_utils import MLXLoadedGenerator, mlx_generation_options_from_config
 from common.text_utils import normalize_whitespace
 
 logger = get_logger(__name__)
@@ -94,6 +94,7 @@ def main() -> None:
         adapter_path=str(adapter_path) if adapter_path else None,
         trust_remote_code=trust_remote_code,
         provider=provider,
+        **mlx_generation_options_from_config(answer_cfg),
     )
 
     scores: list[float] = []

@@ -377,6 +377,51 @@ def cmd_app(args: argparse.Namespace) -> None:
     _run(cmd, project_root)
 
 
+def cmd_turboquant_convert(args: argparse.Namespace) -> None:
+    """Convert a HuggingFace or local MLX model to TurboQuant MLX format."""
+    project_root = Path(args.project_root).resolve()
+    hf_path = str(args.hf_path or "").strip()
+    if not hf_path:
+        models_config = _resolve_path(args.models_config, project_root)
+        models_cfg = read_yaml(models_config)
+        model_cfg = models_cfg.get(args.model_key, {})
+        if not isinstance(model_cfg, dict):
+            raise ValueError(f"Model config key '{args.model_key}' is not a mapping")
+        hf_path = str(
+            model_cfg.get("base_model")
+            or model_cfg.get("source_model")
+            or model_cfg.get("model")
+            or ""
+        ).strip()
+
+    if not hf_path:
+        raise ValueError(
+            "No source model found. Pass --hf-path or set model/base_model in "
+            f"{args.model_key}."
+        )
+
+    try:
+        from turboquant_mlx.convert import convert
+    except ImportError as exc:  # pragma: no cover - optional runtime dependency
+        raise RuntimeError(
+            "turboquant_mlx is required for TurboQuant conversion. Install with "
+            "`pip install -e .[turboquant]` or `pip install turboquant-mlx-full`."
+        ) from exc
+
+    mlx_path = _resolve_path(args.mlx_path, project_root)
+    convert(
+        hf_path=hf_path,
+        mlx_path=mlx_path,
+        bits=args.bits,
+        group_size=args.group_size,
+        rotation=args.rotation,
+        rotation_seed=args.rotation_seed,
+        fuse_rotations=args.fuse_rotations,
+        use_qjl=args.use_qjl,
+        dtype=args.dtype or None,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Signature: def build_parser() -> argparse.ArgumentParser.
 
@@ -565,6 +610,56 @@ def build_parser() -> argparse.ArgumentParser:
     app_parser.add_argument("--server-address", default="")
     app_parser.add_argument("--headless", action="store_true")
     app_parser.set_defaults(func=cmd_app)
+
+    tq_parser = subparsers.add_parser(
+        "turboquant-convert",
+        help="Convert a HuggingFace or local model to TurboQuant MLX format.",
+    )
+    tq_parser.add_argument(
+        "--hf-path",
+        default="",
+        help=(
+            "Source HuggingFace repo or local model path. If omitted, the model "
+            "is read from --models-config and --model-key."
+        ),
+    )
+    tq_parser.add_argument("--models-config", default="configs/models.yaml")
+    tq_parser.add_argument("--model-key", default="answer_model")
+    tq_parser.add_argument(
+        "--mlx-path",
+        required=True,
+        help="Output directory for the converted TurboQuant model.",
+    )
+    tq_parser.add_argument("--bits", type=int, default=3, choices=[2, 3, 4])
+    tq_parser.add_argument(
+        "--group-size",
+        type=int,
+        default=64,
+        choices=[32, 64, 128],
+    )
+    tq_parser.add_argument(
+        "--rotation",
+        default="hadamard",
+        choices=["hadamard", "blockwise_hadamard", "none"],
+    )
+    tq_parser.add_argument("--rotation-seed", type=int, default=42)
+    tq_parser.add_argument(
+        "--fuse-rotations",
+        action="store_true",
+        help="Fuse eligible rotations into norms where TurboQuant supports it.",
+    )
+    tq_parser.add_argument(
+        "--use-qjl",
+        action="store_true",
+        help="Enable QJL residual correction during conversion.",
+    )
+    tq_parser.add_argument(
+        "--dtype",
+        default="",
+        choices=["", "float16", "bfloat16", "float32"],
+        help="Optional dtype before quantization.",
+    )
+    tq_parser.set_defaults(func=cmd_turboquant_convert)
 
     return parser
 

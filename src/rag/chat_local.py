@@ -4,7 +4,7 @@ import argparse
 from typing import Any
 
 from common.io_utils import read_yaml
-from common.mlx_utils import MLXLoadedGenerator
+from common.mlx_utils import MLXLoadedGenerator, mlx_generation_options_from_config
 from rag.answer_selection import AnswerSelectionConfig, generate_best_answer
 from rag.prompt_budget import (
     build_rag_prompt,
@@ -108,6 +108,7 @@ def main() -> None:
         adapter_path=str(adapter_path) if adapter_path else None,
         trust_remote_code=trust_remote_code,
         provider=provider,
+        **mlx_generation_options_from_config(answer_cfg),
     )
 
     answer_embedder, answer_cross_encoder = resolve_answer_rerank_resources(

@@ -9,7 +9,11 @@ from tqdm import tqdm
 
 from common.io_utils import append_jsonl, iter_jsonl, read_yaml, repair_jsonl_tail, write_jsonl, count_iter_jsonl
 from common.logging_utils import get_logger
-from common.mlx_utils import MLXLoadedGenerator, extract_first_json_object
+from common.mlx_utils import (
+    MLXLoadedGenerator,
+    extract_first_json_object,
+    mlx_generation_options_from_config,
+)
 from common.prompts import qa_generation_prompt, webex_thread_question_prompt
 from common.schemas import ChunkRecord, QARecord
 from common.text_utils import normalize_whitespace, stable_id
@@ -499,6 +503,7 @@ def main() -> None:
         adapter_path=str(adapter_path) if adapter_path else None,
         trust_remote_code=trust_remote_code,
         provider=provider,
+        **mlx_generation_options_from_config(qa_model_cfg),
     )
 
     resumed_skipped_chunks = 0

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from common.io_utils import read_yaml, write_json
-from common.mlx_utils import MLXLoadedGenerator
+from common.mlx_utils import MLXLoadedGenerator, mlx_generation_options_from_config
 from rag.answer_selection import AnswerSelectionConfig, generate_best_answer
 from rag.eval_common import (
     best_match_rank,
@@ -76,6 +76,7 @@ def main() -> None:
         adapter_path=(args.adapter_path or answer_cfg.get("adapter_path") or None),
         trust_remote_code=bool(answer_cfg.get("trust_remote_code", True)),
         provider=str(answer_cfg.get("provider", "mlx")),
+        **mlx_generation_options_from_config(answer_cfg),
     )
 
     answer_sel_cfg = AnswerSelectionConfig(

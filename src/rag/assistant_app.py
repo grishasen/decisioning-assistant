@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+from tempfile import gettempdir
+from time import perf_counter
 from typing import Any
 
 import streamlit as st
 
 from common.io_utils import read_yaml
-from common.mlx_utils import MLXLoadedGenerator
+from common.mlx_utils import MLXLoadedGenerator, mlx_generation_options_from_config
 from rag.answer_selection import AnswerSelectionConfig, generate_best_answer
 from rag.prompt_budget import (
     build_rag_prompt,
@@ -23,6 +27,13 @@ from rag.retrieve import LocalRetriever, resolve_answer_rerank_resources
 
 _PAGE_REF_RE = re.compile(r"#page=(\d+)")
 _SECTION_REF_RE = re.compile(r"#section=(\d+)(?:-\d+)?")
+_IMAGE_UPLOAD_TYPES = ("png", "jpg", "jpeg", "webp")
+_IMAGE_RETRIEVAL_DESCRIPTION_PROMPT = (
+    "Create a concise, factual description of the attached image for document "
+    "retrieval. Focus on visible text, UI labels, diagrams, products, errors, "
+    "entities, dates, statuses, and technical concepts. Do not answer the user; "
+    "only describe retrieval-relevant image content."
+)
 
 
 @dataclass(frozen=True)
@@ -58,6 +69,11 @@ class GenerationConfig:
     temperature: float
     adapter_path: str | None
     trust_remote_code: bool
+    turboquant_fast: bool
+    turboquant_kv_bits: int | None
+    turboquant_kv_group_size: int
+    turboquant_min_tokens: int
+    turboquant_prefill_step_size: int
 
 
 @st.cache_resource(show_spinner=False)
@@ -100,6 +116,11 @@ def _load_generator(cfg: GenerationConfig) -> MLXLoadedGenerator:
         adapter_path=cfg.adapter_path,
         trust_remote_code=cfg.trust_remote_code,
         provider=cfg.provider,
+        turboquant_fast=cfg.turboquant_fast,
+        turboquant_kv_bits=cfg.turboquant_kv_bits,
+        turboquant_kv_group_size=cfg.turboquant_kv_group_size,
+        turboquant_min_tokens=cfg.turboquant_min_tokens,
+        turboquant_prefill_step_size=cfg.turboquant_prefill_step_size,
     )
 
 
@@ -122,6 +143,119 @@ def _clamp(value: int, minimum: int, maximum: int) -> int:
     Handle clamp.
     """
     return max(minimum, min(value, maximum))
+
+
+def _supports_image_upload(provider: str) -> bool:
+    """Return whether the selected generation provider can accept images."""
+    normalized = provider.strip().lower().replace("-", "_")
+    return normalized in {"mlx_vlm", "vlm", "vision", "multimodal"}
+
+
+def _safe_upload_name(name: str) -> str:
+    """Return a conservative filename for materialized image uploads."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(name or "image")).strip("._")
+    return cleaned or "image"
+
+
+def _uploaded_image_payloads(uploaded_files: list[Any]) -> list[dict[str, Any]]:
+    """Persist uploaded images and return payloads for display and VLM input."""
+    if not uploaded_files:
+        return []
+
+    upload_dir = Path(gettempdir()) / "decisioning-assistant-vlm-uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    payloads: list[dict[str, Any]] = []
+    for uploaded_file in uploaded_files:
+        data = uploaded_file.getvalue()
+        if not data:
+            continue
+
+        original_name = _safe_upload_name(getattr(uploaded_file, "name", "image"))
+        digest = hashlib.sha256(data).hexdigest()[:16]
+        path = upload_dir / f"{digest}-{original_name}"
+        if not path.exists():
+            path.write_bytes(data)
+
+        payloads.append(
+            {
+                "name": original_name,
+                "path": str(path),
+                "bytes": data,
+                "mime_type": getattr(uploaded_file, "type", ""),
+            }
+        )
+    return payloads
+
+
+def _render_attached_images(images: list[dict[str, Any]] | None) -> None:
+    """Render uploaded image thumbnails in chat history."""
+    if not images:
+        return
+    for image in images:
+        image_bytes = image.get("bytes")
+        if image_bytes:
+            st.image(image_bytes, caption=str(image.get("name") or "image"), width=240)
+
+
+def _image_paths(images: list[dict[str, Any]] | None) -> list[str]:
+    """Return persisted image paths for VLM calls."""
+    if not images:
+        return []
+    return [str(image["path"]) for image in images if image.get("path")]
+
+
+def _describe_images_for_retrieval(
+    *,
+    generator: MLXLoadedGenerator,
+    question: str,
+    images: list[dict[str, Any]],
+    max_tokens: int,
+) -> str:
+    """Generate a compact image description before retrieval."""
+    paths = _image_paths(images)
+    if not paths:
+        return ""
+
+    prompt = (
+        f"{_IMAGE_RETRIEVAL_DESCRIPTION_PROMPT}\n\n"
+        f"User question:\n{question}\n\n"
+        "Image description:"
+    )
+    description = generator.generate(
+        prompt=prompt,
+        max_tokens=max(64, min(max_tokens, 256)),
+        temperature=0.0,
+        images=paths,
+    )
+    return str(description or "").strip()
+
+
+def _retrieval_question(question: str, image_description: str) -> str:
+    """Combine the text question and image description for retrieval."""
+    description = str(image_description or "").strip()
+    if not description:
+        return question
+    return (
+        f"{question}\n\n"
+        "Attached image description for retrieval:\n"
+        f"{description}"
+    )
+
+
+def _context_with_image_description(context: str, image_description: str) -> str:
+    """Append image-derived context to retrieved text."""
+    description = str(image_description or "").strip()
+    if not description:
+        return context
+
+    image_context = (
+        "Attached image description generated before retrieval:\n"
+        f"{description}"
+    )
+    if not context:
+        return image_context
+    return f"{image_context}\n\n{context}"
 
 
 def _infer_source_type(row: dict[str, Any]) -> str:
@@ -158,6 +292,21 @@ def _format_datetime(raw_value: Any) -> str:
         return datetime.fromisoformat(normalized).isoformat(sep=" ", timespec="seconds")
     except ValueError:
         return text
+
+
+def _format_answer_time(seconds: Any) -> str:
+    """Format answer latency for chat display."""
+    if not isinstance(seconds, (int, float)):
+        return ""
+    if seconds < 0:
+        return ""
+    if seconds < 1:
+        return f"{seconds * 1000:.0f} ms"
+    if seconds < 60:
+        return f"{seconds:.1f} s"
+    minutes = int(seconds // 60)
+    remaining_seconds = seconds - (minutes * 60)
+    return f"{minutes}m {remaining_seconds:.1f}s"
 
 
 def _extract_pdf_page(source_ref: str, metadata: dict[str, Any]) -> str:
@@ -324,6 +473,7 @@ def main() -> None:
     max_tokens = int(answer_cfg.get("max_tokens", 256))
     temperature = float(answer_cfg.get("temperature", 0.2))
     trust_remote_code = bool(answer_cfg.get("trust_remote_code", True))
+    generation_options = mlx_generation_options_from_config(answer_cfg)
 
     top_k_min = int(rag_cfg.get("top_k_min", 1))
     top_k_max = int(rag_cfg.get("top_k_max", 30))
@@ -681,6 +831,20 @@ def main() -> None:
 
         st.markdown(f"**Model**: `{model_name}`")
         st.caption(f"Generation provider: {provider}")
+        if provider.strip().lower().replace("-", "_") in {
+            "tq",
+            "tq_mlx",
+            "turboquant",
+            "turboquant_mlx",
+        }:
+            kv_bits = generation_options["turboquant_kv_bits"]
+            kv_label = f"{kv_bits}-bit" if kv_bits else "off"
+            st.caption(
+                "TurboQuant: "
+                f"fast={generation_options['turboquant_fast']}, "
+                f"KV={kv_label}, "
+                f"group={generation_options['turboquant_kv_group_size']}"
+            )
         st.caption(
             "Retrieval: "
             f"fetch_k={fetch_k}, mode={rerank_mode}, threshold={score_threshold:.2f}, "
@@ -751,6 +915,13 @@ def main() -> None:
             adapter_override.strip() or answer_cfg.get("adapter_path") or None
         ),
         trust_remote_code=trust_remote_code,
+        turboquant_fast=bool(generation_options["turboquant_fast"]),
+        turboquant_kv_bits=generation_options["turboquant_kv_bits"],
+        turboquant_kv_group_size=int(generation_options["turboquant_kv_group_size"]),
+        turboquant_min_tokens=int(generation_options["turboquant_min_tokens"]),
+        turboquant_prefill_step_size=int(
+            generation_options["turboquant_prefill_step_size"]
+        ),
     )
 
     try:
@@ -771,24 +942,64 @@ def main() -> None:
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            _render_attached_images(message.get("images"))
+            answer_time = _format_answer_time(message.get("answer_time_seconds"))
+            if answer_time:
+                st.caption(f"Answered in {answer_time}")
             sources = message.get("sources")
             if sources:
                 with st.expander("Sources"):
                     for idx, row in enumerate(sources, start=1):
                         _render_source_row(row, idx)
 
-    question = st.chat_input("Ask a question")
+    image_upload_enabled = _supports_image_upload(provider)
+    submission = st.chat_input(
+        "Ask a question",
+        accept_file="multiple" if image_upload_enabled else False,
+        file_type=_IMAGE_UPLOAD_TYPES if image_upload_enabled else None,
+    )
+    if not submission:
+        return
+
+    if isinstance(submission, str):
+        question = submission.strip()
+        uploaded_files: list[Any] = []
+    else:
+        question = str(getattr(submission, "text", "") or "").strip()
+        uploaded_files = list(getattr(submission, "files", []) or [])
+
+    attached_images = _uploaded_image_payloads(uploaded_files)
+    if not question and attached_images:
+        question = "Describe the attached image."
     if not question:
         return
 
-    st.session_state.messages.append({"role": "user", "content": question})
+    st.session_state.messages.append(
+        {
+            "role": "user",
+            "content": question,
+            "images": attached_images,
+        }
+    )
     with st.chat_message("user"):
         st.markdown(question)
+        _render_attached_images(attached_images)
 
     with st.chat_message("assistant"):
         with st.spinner("Retrieving context and generating answer..."):
+            answer_started_at = perf_counter()
             try:
-                retrieved_rows = retriever.search(question=question, top_k=top_k)
+                image_description = _describe_images_for_retrieval(
+                    generator=generator,
+                    question=question,
+                    images=attached_images,
+                    max_tokens=gen_cfg.max_tokens,
+                )
+                if attached_images:
+                    st.session_state.messages[-1]["image_description"] = image_description
+
+                retrieval_query = _retrieval_question(question, image_description)
+                retrieved_rows = retriever.search(question=retrieval_query, top_k=top_k)
                 selected_rows = select_context_rows(
                     rows=retrieved_rows,
                     max_rows=max_context_chunks,
@@ -797,7 +1008,10 @@ def main() -> None:
                     max_chunk_tokens=max_chunk_tokens,
                     max_total_tokens=max_total_context_tokens,
                 )
-                context = format_context(selected_rows)
+                context = _context_with_image_description(
+                    format_context(selected_rows),
+                    image_description,
+                )
                 history = format_history(
                     st.session_state.messages,
                     max_turns=max_history_turns,
@@ -829,13 +1043,18 @@ def main() -> None:
                     embedder=answer_embedder,
                     normalize_embeddings=retriever.normalize_embeddings,
                     cross_encoder=answer_cross_encoder,
+                    images=_image_paths(attached_images) or None,
                 )
             except Exception as exc:  # noqa: BLE001
                 answer = f"Generation failed: {exc}"
                 selected_rows = []
                 ranked_candidates = []
+            answer_time_seconds = perf_counter() - answer_started_at
 
         st.markdown(answer)
+        answer_time = _format_answer_time(answer_time_seconds)
+        if answer_time:
+            st.caption(f"Answered in {answer_time}")
         if len(ranked_candidates) > 1:
             with st.expander("Answer Candidates"):
                 for idx, candidate in enumerate(ranked_candidates, start=1):
@@ -855,6 +1074,7 @@ def main() -> None:
             "role": "assistant",
             "content": answer,
             "sources": selected_rows,
+            "answer_time_seconds": answer_time_seconds,
         }
     )
 
