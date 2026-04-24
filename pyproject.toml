@@ -14,11 +14,17 @@ dependencies = [
   "numpy>=1.26",
   "tqdm>=4.66",
   "pymupdf>=1.27.2.2",
+  "pymupdf4llm>=0.0.16",
   "qdrant-client>=1.17.1",
   "sentence-transformers>=5.3.0",
   "mlx-lm>=0.31.1",
+  "mlx-vlm>=0.4.4",
+  "torchvision>=0.26",
+  "turboquant-mlx-full>=0.1.2",
   "python-dotenv>=1.0",
   "streamlit>=1.55.0",
+  "pytest>=8.0",
+  "ruff>=0.6",
 ]
 
 

@@ -49,6 +49,21 @@ def _summarize_case(case: dict[str, Any], rows: list[dict[str, Any]], top_k: int
             "chunk_id": row.get("chunk_id"),
             "record_type": row.get("record_type"),
             "score": float(row.get("score") or 0.0),
+            "qdrant_score": (
+                float(row["qdrant_score"])
+                if isinstance(row.get("qdrant_score"), (int, float))
+                else None
+            ),
+            "rerank_score": (
+                float(row["rerank_score"])
+                if isinstance(row.get("rerank_score"), (int, float))
+                else None
+            ),
+            "recency_bonus": (
+                float(row["recency_bonus"])
+                if isinstance(row.get("recency_bonus"), (int, float))
+                else None
+            ),
         }
         for idx, row in enumerate(rows[:top_k], start=1)
     ]

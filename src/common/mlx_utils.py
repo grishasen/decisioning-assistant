@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
+from queue import Queue
 from typing import Any, Callable, Mapping
 
 
@@ -456,6 +458,84 @@ class MLXLoadedGenerator:
         if not output:
             raise RuntimeError("mlx_lm.generate returned empty output")
         return output
+
+
+_STOP_GENERATOR_WORKER = object()
+
+
+class MLXThreadedGenerator:
+    """Run a generator on the same thread that loaded it.
+
+    MLX keeps GPU stream state per thread. Streamlit can reuse cached resources
+    from different script threads, so cached MLX model objects should not be
+    called directly from the Streamlit thread that happens to handle a rerun.
+    """
+
+    def __init__(self, factory: Callable[[], Any]) -> None:
+        self._factory = factory
+        self._tasks: Queue[Any] = Queue()
+        self._ready = threading.Event()
+        self._init_error: BaseException | None = None
+        self._generator: Any | None = None
+        self._thread = threading.Thread(
+            target=self._run,
+            name="decisioning-assistant-mlx-generator",
+            daemon=True,
+        )
+        self._thread.start()
+        self._ready.wait()
+        if self._init_error is not None:
+            raise RuntimeError("Failed to initialize MLX generator worker") from self._init_error
+
+    def _run(self) -> None:
+        try:
+            self._generator = self._factory()
+        except BaseException as exc:  # noqa: BLE001
+            self._init_error = exc
+            self._ready.set()
+            return
+
+        self._ready.set()
+        while True:
+            task = self._tasks.get()
+            if task is _STOP_GENERATOR_WORKER:
+                return
+
+            try:
+                task["result"] = self._generator.generate(
+                    *task["args"],
+                    **task["kwargs"],
+                )
+            except BaseException as exc:  # noqa: BLE001
+                task["error"] = exc
+            finally:
+                task["done"].set()
+
+    def generate(self, *args: Any, **kwargs: Any) -> str:
+        """Generate text on the worker thread that owns the MLX model."""
+        if threading.current_thread() is self._thread:
+            if self._generator is None:
+                raise RuntimeError("MLX generator worker is not initialized")
+            return self._generator.generate(*args, **kwargs)
+
+        done = threading.Event()
+        task: dict[str, Any] = {
+            "args": args,
+            "kwargs": kwargs,
+            "done": done,
+            "result": None,
+            "error": None,
+        }
+        self._tasks.put(task)
+        done.wait()
+        if task["error"] is not None:
+            raise task["error"]
+        return str(task["result"])
+
+    def close(self) -> None:
+        """Ask the worker thread to stop."""
+        if self._thread.is_alive():
+            self._tasks.put(_STOP_GENERATOR_WORKER)
 
 
 def extract_first_json_object(text: str) -> dict[str, Any] | None:

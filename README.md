@@ -76,20 +76,9 @@ pip install -U pip
 pip install -e .
 ```
 
-Optional developer tools:
-```bash
-pip install -e .[dev]
-```
-
-Optional VLM model support for Gemma 4 and other MLX-VLM checkpoints:
-```bash
-pip install -e .[vlm]
-```
-
-Optional TurboQuant model conversion and runtime support:
-```bash
-pip install -e .[turboquant]
-```
+The base install includes the test/lint tools, PDF markdown support, MLX-VLM
+model support with TorchVision image utilities, and TurboQuant conversion/runtime
+support used by the project.
 
 ## Main Configuration Files
 - `configs/sources.yaml`: PDF and Webex ingestion paths plus normalization/chunking settings.

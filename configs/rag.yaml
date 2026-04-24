@@ -1,100 +1,113 @@
-# RAG retrieval and prompt budget config.
+# RAG profile for Apple Silicon M5 Pro with 64 GB unified memory.
 #
-# Baseline values below were tuned for Apple MacBook Pro M3 24GB.
-# They are intentionally configurable for larger future hardware (for example M5 48GB).
+# Compared with configs/rag.yaml, this profile:
+# - uses a larger English embedding model,
+# - keeps the cross-encoder as the authoritative second-stage ranker,
+# - fetches a wider candidate set before reranking,
+# - gives the larger answer model substantially more context.
+#
+# Rebuild the index after switching to this file because bge-large-en-v1.5 has
+# a different vector dimension than bge-base-en-v1.5.
 
-# Hybrid indexing corpus:
-# - chunks from source documents
-# - synthetic QA pairs generated from those chunks
-# Prompt mode for final answer generation.
-# grounded: recommended for reliable advisory RAG
-# legacy_reasoning: keeps the previous <think>-style prompt behavior
 prompt_mode: grounded
 
 chunks_path: data/staging/chunks/chunks.jsonl
 include_qa: true
-qa_path: data/qa/qa_clean.jsonl
-# question_answer | question_only | answer_only
+qa_path: data/qa_m5/qa_clean.jsonl
 qa_text_mode: question_answer
-max_qa_answer_chars: 1400
+max_qa_answer_chars: 2200
 
-qdrant_path: data/rag/vectordb
-collection_name: docs
-embedding_model: BAAI/bge-base-en-v1.5
+qdrant_path: data/rag/vectordb_m5_pro_64gb
+collection_name: docs_m5_pro_64gb
+embedding_model: BAAI/bge-large-en-v1.5
 normalize_embeddings: true
 
-# Add short metadata context to retrieval text at index time.
-# Raw text is still preserved for prompt context and source popups.
+# Hybrid first-stage retrieval. Rebuild the collection with --recreate after
+# enabling because Qdrant stores dense-only and dense+sparse collections with
+# different vector schemas. Existing dense-only collections are still queried
+# with dense fallback until rebuilt.
+hybrid_search_enabled: true
+dense_vector_name: dense
+sparse_vector_name: sparse
+sparse_modifier: idf
+sparse_max_terms: 512
+sparse_min_token_chars: 2
+hybrid_dense_weight: 1.0
+hybrid_sparse_weight: 1.0
+hybrid_rrf_k: 0
+
+# Rewrite follow-up questions into standalone retrieval queries using recent
+# conversation history before vector/sparse search.
+query_rewrite_enabled: true
+query_rewrite_max_tokens: 96
+query_rewrite_temperature: 0.0
+query_rewrite_max_history_turns: 3
+query_rewrite_max_history_chars: 1800
+query_rewrite_max_history_tokens: 0
+
+# User feedback is appended as JSONL so bad answers and source misses can be
+# promoted into retrieval/answering eval cases.
+feedback_enabled: true
+feedback_path: data/feedback/rag_feedback.jsonl
+
 contextualize_index_text: true
-contextual_index_max_prefix_chars: 320
+contextual_index_max_prefix_chars: 420
 contextualize_pdf_chunks: true
 contextualize_webex_chunks: true
 contextualize_qa_pairs: true
 
 # Retrieval defaults + UI bounds.
-top_k: 8
+top_k: 12
 top_k_min: 1
-top_k_max: 100
+top_k_max: 150
 
-# Fetch more candidates first, then rerank/filter/diversify.
-fetch_k: 30
-score_threshold: 0.12
-# none | embedding_cosine | cross_encoder
+# Higher-recall first stage; the cross-encoder then decides final order.
+fetch_k: 80
+score_threshold: 0.08
 rerank_mode: cross_encoder
-# Used only when rerank_mode=cross_encoder
 reranker_model: BAAI/bge-reranker-v2-m3
-# Blend between rerank score and original vector score.
-# final = rerank_alpha * rerank + (1-rerank_alpha) * vector_score
-rerank_alpha: 0.65
-# Mild boost for qa_pair records at retrieval time.
-qa_pair_score_boost: 0.03
-# 0 disables per-source cap
-max_per_source: 3
+# Let the reranker dominate final order. Vector score still controls Qdrant
+# candidate generation and score_threshold prefiltering.
+rerank_alpha: 1.0
+qa_pair_score_boost: 0.02
+max_per_source: 4
 
 # Query-time recency bonus for Webex content only.
-# This is additive, so it nudges newer Webex threads/messages upward without overriding semantic relevance.
 webex_recency_enabled: true
-# Prefer updated_at for threads; falls back to created_at and ingested_at automatically.
 webex_recency_field: created_at
-# Mild default weighting for general Webex questions.
-webex_recency_half_life_days: 90
-webex_recency_max_bonus: 0.04
-# Apply recency bonus to Webex-derived QA records as well as raw chunks.
+webex_recency_half_life_days: 120
+webex_recency_max_bonus: 0.035
 webex_recency_apply_to_qa_pairs: true
-# If the question asks for recent/current/latest info, use the stronger settings below.
 webex_recency_query_adaptive: true
 webex_recency_recent_half_life_days: 30
-webex_recency_recent_max_bonus: 0.10
+webex_recency_recent_max_bonus: 0.08
 
-# Answer selection after RAG context is built.
-# Generate multiple answers, then rerank them against the question + retrieved context.
-answer_sample_count: 4
+# Larger model, fewer Best-of-N samples by default to keep interactive latency
+# reasonable. Raise to 4-6 for offline answer evaluation.
+answer_sample_count: 3
 answer_sample_count_min: 1
-answer_sample_count_max: 12
-# none | embedding_cosine | cross_encoder
+answer_sample_count_max: 8
 answer_rerank_mode: cross_encoder
-# Blend between question-answer relevance and context-grounded support.
-# final = (1-answer_rerank_alpha) * relevance + answer_rerank_alpha * support
-answer_rerank_alpha: 0.7
-# Number of top context rows used to score answer support.
-answer_rerank_support_top_k: 3
+answer_rerank_alpha: 0.75
+answer_rerank_support_top_k: 4
 
-max_context_chunks: 6
+max_context_chunks: 10
 max_context_chunks_min: 1
-max_context_chunks_max: 50
+max_context_chunks_max: 80
 
-# Character-based budgets (always available).
-max_history_turns: 8
-max_history_chars: 6000
-max_chunk_chars: 2400
-max_total_context_chars: 9000
-max_prompt_chars: 18000
+# Character-based budgets.
+max_history_turns: 10
+max_history_chars: 10000
+max_chunk_chars: 3600
+max_total_context_chars: 36000
+max_prompt_chars: 60000
 
-# Optional token budgets (0 disables).
-max_history_tokens: 1200
-max_chunk_tokens: 700
-max_total_context_tokens: 2600
-max_prompt_tokens: 5000
+# Token budgets are approximate, but keep them below the model's native context
+# so there is room for generation and MLX KV-cache growth.
+max_history_tokens: 2200
+max_chunk_tokens: 1000
+max_total_context_tokens: 10000
+max_prompt_tokens: 16000
 
-# Embedding/indexing throughput-memory tradeoff.
-index_batch_size: 128
+# Larger batch is comfortable on 64 GB when building the 1024-dim index.
+index_batch_size: 256

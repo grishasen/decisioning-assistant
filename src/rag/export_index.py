@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import VectorParams
+from qdrant_client.models import SparseIndexParams, SparseVectorParams, VectorParams
 
 from common.io_utils import read_yaml, write_json
 from common.logging_utils import get_logger
@@ -75,6 +75,58 @@ def _serialize_vectors_config(vectors: Any) -> dict[str, Any]:
         }
 
     raise ValueError(f"Unsupported vectors config type: {type(vectors)!r}")
+
+
+def _serialize_sparse_index(index: SparseIndexParams | None) -> dict[str, Any] | None:
+    """Serialize sparse index params when present."""
+    if index is None:
+        return None
+    return {
+        "full_scan_threshold": index.full_scan_threshold,
+        "on_disk": index.on_disk,
+        "datatype": (
+            index.datatype.value
+            if getattr(index.datatype, "value", None)
+            else index.datatype
+        ),
+    }
+
+
+def _serialize_sparse_vectors_config(sparse_vectors: Any) -> dict[str, Any]:
+    """Serialize Qdrant sparse vector config."""
+    if not sparse_vectors:
+        return {}
+    if not isinstance(sparse_vectors, dict):
+        raise ValueError(
+            f"Unsupported sparse vectors config type: {type(sparse_vectors)!r}"
+        )
+
+    serialized: dict[str, Any] = {}
+    for name, cfg in sparse_vectors.items():
+        if not isinstance(cfg, SparseVectorParams):
+            raise ValueError(
+                f"Unsupported sparse vector config for '{name}': {type(cfg)!r}"
+            )
+        serialized[name] = {
+            "modifier": (
+                cfg.modifier.value
+                if getattr(cfg.modifier, "value", None)
+                else cfg.modifier
+            ),
+            "index": _serialize_sparse_index(cfg.index),
+        }
+    return serialized
+
+
+def _json_safe_vector(value: Any) -> Any:
+    """Return vectors in JSON-serializable form, including sparse-vector models."""
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, dict):
+        return {str(key): _json_safe_vector(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe_vector(item) for item in value]
+    return value
 
 
 def _json_safe_id(value: Any) -> Any:
@@ -146,6 +198,9 @@ def main() -> None:
 
     collection_info = client.get_collection(collection_name=collection_name)
     vectors_config = _serialize_vectors_config(collection_info.config.params.vectors)
+    sparse_vectors_config = _serialize_sparse_vectors_config(
+        collection_info.config.params.sparse_vectors
+    )
 
     exported_points = 0
     scanned_points = 0
@@ -175,7 +230,7 @@ def main() -> None:
 
                 row = {
                     "id": _json_safe_id(point.id),
-                    "vector": point.vector,
+                    "vector": _json_safe_vector(point.vector),
                     "payload": payload,
                 }
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -186,10 +241,11 @@ def main() -> None:
             offset = next_offset
 
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "collection_name": collection_name,
         "vectors_config": vectors_config,
+        "sparse_vectors_config": sparse_vectors_config,
         "source_filter": sorted(selected_sources),
         "points_file": points_path.name,
         "points_count": exported_points,

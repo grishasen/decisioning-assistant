@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -12,8 +13,13 @@ from typing import Any
 import streamlit as st
 
 from common.io_utils import read_yaml
-from common.mlx_utils import MLXLoadedGenerator, mlx_generation_options_from_config
+from common.mlx_utils import (
+    MLXLoadedGenerator,
+    MLXThreadedGenerator,
+    mlx_generation_options_from_config,
+)
 from rag.answer_selection import AnswerSelectionConfig, generate_best_answer
+from rag.feedback import append_feedback, build_feedback_row
 from rag.prompt_budget import (
     build_rag_prompt,
     clip_text,
@@ -23,10 +29,12 @@ from rag.prompt_budget import (
     normalize_prompt_mode,
     select_context_rows,
 )
+from rag.query_planning import QueryRewriteConfig, rewrite_retrieval_query
 from rag.retrieve import LocalRetriever, resolve_answer_rerank_resources
 
 _PAGE_REF_RE = re.compile(r"#page=(\d+)")
 _SECTION_REF_RE = re.compile(r"#section=(\d+)(?:-\d+)?")
+_SNIPPET_TERM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
 _IMAGE_UPLOAD_TYPES = ("png", "jpg", "jpeg", "webp")
 _IMAGE_RETRIEVAL_DESCRIPTION_PROMPT = (
     "Create a concise, factual description of the attached image for document "
@@ -58,6 +66,14 @@ class RetrievalConfig:
     webex_recency_query_adaptive: bool
     webex_recency_recent_half_life_days: float
     webex_recency_recent_max_bonus: float
+    hybrid_search_enabled: bool
+    dense_vector_name: str
+    sparse_vector_name: str
+    sparse_max_terms: int
+    sparse_min_token_chars: int
+    hybrid_dense_weight: float
+    hybrid_sparse_weight: float
+    hybrid_rrf_k: int
 
 
 @dataclass(frozen=True)
@@ -74,6 +90,14 @@ class GenerationConfig:
     turboquant_kv_group_size: int
     turboquant_min_tokens: int
     turboquant_prefill_step_size: int
+
+
+@dataclass(frozen=True)
+class AppFeedbackConfig:
+    """Store answer feedback settings."""
+
+    enabled: bool
+    path: str
 
 
 @st.cache_resource(show_spinner=False)
@@ -102,25 +126,35 @@ def _load_retriever(cfg: RetrievalConfig) -> LocalRetriever:
         webex_recency_query_adaptive=cfg.webex_recency_query_adaptive,
         webex_recency_recent_half_life_days=cfg.webex_recency_recent_half_life_days,
         webex_recency_recent_max_bonus=cfg.webex_recency_recent_max_bonus,
+        hybrid_search_enabled=cfg.hybrid_search_enabled,
+        dense_vector_name=cfg.dense_vector_name,
+        sparse_vector_name=cfg.sparse_vector_name,
+        sparse_max_terms=cfg.sparse_max_terms,
+        sparse_min_token_chars=cfg.sparse_min_token_chars,
+        hybrid_dense_weight=cfg.hybrid_dense_weight,
+        hybrid_sparse_weight=cfg.hybrid_sparse_weight,
+        hybrid_rrf_k=cfg.hybrid_rrf_k,
     )
 
 
 @st.cache_resource(show_spinner=False)
-def _load_generator(cfg: GenerationConfig) -> MLXLoadedGenerator:
-    """Signature: def _load_generator(cfg: GenerationConfig) -> MLXLoadedGenerator.
+def _load_generator(cfg: GenerationConfig) -> MLXThreadedGenerator:
+    """Signature: def _load_generator(cfg: GenerationConfig) -> MLXThreadedGenerator.
 
     Load generator.
     """
-    return MLXLoadedGenerator(
-        model=cfg.model_name,
-        adapter_path=cfg.adapter_path,
-        trust_remote_code=cfg.trust_remote_code,
-        provider=cfg.provider,
-        turboquant_fast=cfg.turboquant_fast,
-        turboquant_kv_bits=cfg.turboquant_kv_bits,
-        turboquant_kv_group_size=cfg.turboquant_kv_group_size,
-        turboquant_min_tokens=cfg.turboquant_min_tokens,
-        turboquant_prefill_step_size=cfg.turboquant_prefill_step_size,
+    return MLXThreadedGenerator(
+        lambda: MLXLoadedGenerator(
+            model=cfg.model_name,
+            adapter_path=cfg.adapter_path,
+            trust_remote_code=cfg.trust_remote_code,
+            provider=cfg.provider,
+            turboquant_fast=cfg.turboquant_fast,
+            turboquant_kv_bits=cfg.turboquant_kv_bits,
+            turboquant_kv_group_size=cfg.turboquant_kv_group_size,
+            turboquant_min_tokens=cfg.turboquant_min_tokens,
+            turboquant_prefill_step_size=cfg.turboquant_prefill_step_size,
+        )
     )
 
 
@@ -205,9 +239,14 @@ def _image_paths(images: list[dict[str, Any]] | None) -> list[str]:
     return [str(image["path"]) for image in images if image.get("path")]
 
 
+def _new_message_id() -> str:
+    """Return a stable id for chat messages and feedback rows."""
+    return uuid.uuid4().hex
+
+
 def _describe_images_for_retrieval(
     *,
-    generator: MLXLoadedGenerator,
+    generator: Any,
     question: str,
     images: list[dict[str, Any]],
     max_tokens: int,
@@ -256,6 +295,57 @@ def _context_with_image_description(context: str, image_description: str) -> str
     if not context:
         return image_context
     return f"{image_context}\n\n{context}"
+
+
+def _retrieval_terms(query: str) -> list[str]:
+    """Return meaningful lexical terms from a retrieval query."""
+    seen: set[str] = set()
+    terms: list[str] = []
+    for match in _SNIPPET_TERM_RE.findall(str(query or "").casefold()):
+        if len(match) < 3 or match in seen:
+            continue
+        seen.add(match)
+        terms.append(match)
+    return terms
+
+
+def _source_snippet(row: dict[str, Any], query: str, max_chars: int = 420) -> str:
+    """Return a compact evidence snippet for a source row."""
+    text = " ".join(str(row.get("text") or "").split())
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+
+    lowered = text.casefold()
+    positions = [
+        lowered.find(term)
+        for term in _retrieval_terms(query)
+        if term and lowered.find(term) >= 0
+    ]
+    center = min(positions) if positions else 0
+    start = max(0, center - max_chars // 3)
+    end = min(len(text), start + max_chars)
+    start = max(0, end - max_chars)
+
+    snippet = text[start:end].strip()
+    if start > 0:
+        snippet = f"...{snippet}"
+    if end < len(text):
+        snippet = f"{snippet}..."
+    return snippet
+
+
+def _score_explanation(row: dict[str, Any]) -> str:
+    """Return compact retrieval score details for source inspection."""
+    parts = [f"final={float(row.get('score') or 0.0):.4f}"]
+    if isinstance(row.get("qdrant_score"), (int, float)):
+        parts.append(f"vector={float(row['qdrant_score']):.4f}")
+    if isinstance(row.get("rerank_score"), (int, float)):
+        parts.append(f"rerank={float(row['rerank_score']):.4f}")
+    if isinstance(row.get("recency_bonus"), (int, float)):
+        parts.append(f"recency_bonus={float(row['recency_bonus']):.4f}")
+    return ", ".join(parts)
 
 
 def _infer_source_type(row: dict[str, Any]) -> str:
@@ -419,7 +509,12 @@ def _webex_parent_message_link(row: dict[str, Any]) -> str:
     return value.strip()
 
 
-def _render_source_row(row: dict[str, Any], index: int) -> None:
+def _render_source_row(
+    row: dict[str, Any],
+    index: int,
+    *,
+    retrieval_query: str = "",
+) -> None:
     """Signature: def _render_source_row(row: dict[str, Any], index: int) -> None.
 
     Render source row.
@@ -428,15 +523,67 @@ def _render_source_row(row: dict[str, Any], index: int) -> None:
 
     with left:
         st.markdown(_format_source_line(row))
+        snippet = _source_snippet(row, retrieval_query)
+        if snippet:
+            st.caption(snippet)
 
     with right:
-        with st.popover(f"Show text", type="tertiary"):
+        with st.popover("Show text", type="tertiary"):
+            st.caption(_score_explanation(row))
             webex_link = _webex_parent_message_link(row)
             if webex_link:
                 st.markdown(f"[Open parent message in Webex]({webex_link})")
                 st.caption(webex_link)
             st.caption("Retrieved document text")
             st.text(_source_popup_text(row))
+
+
+def _render_feedback_controls(
+    message: dict[str, Any],
+    *,
+    feedback_cfg: AppFeedbackConfig,
+) -> None:
+    """Render and persist answer feedback controls for one assistant message."""
+    if not feedback_cfg.enabled:
+        return
+
+    message_id = str(message.setdefault("message_id", _new_message_id()))
+    feedback = message.get("feedback")
+    if isinstance(feedback, dict) and feedback.get("rating"):
+        st.caption(f"Feedback recorded: {feedback['rating']}")
+        return
+
+    note_key = f"feedback_note_{message_id}"
+    st.text_area("Feedback note", key=note_key, height=68, label_visibility="collapsed")
+    good_col, bad_col = st.columns([0.5, 0.5])
+    rating = ""
+    with good_col:
+        if st.button("Helpful", key=f"feedback_good_{message_id}"):
+            rating = "helpful"
+    with bad_col:
+        if st.button("Needs work", key=f"feedback_bad_{message_id}"):
+            rating = "needs_work"
+
+    if not rating:
+        return
+
+    row = build_feedback_row(
+        message_id=message_id,
+        rating=rating,
+        feedback_text=str(st.session_state.get(note_key, "")),
+        question=str(message.get("question") or ""),
+        answer=str(message.get("content") or ""),
+        retrieval_query=str(message.get("retrieval_query") or ""),
+        sources=list(message.get("sources") or []),
+        answer_time_seconds=message.get("answer_time_seconds"),
+    )
+    append_feedback(feedback_cfg.path, row)
+    message["feedback"] = {
+        "rating": rating,
+        "feedback_text": row["feedback_text"],
+        "created_at": row["created_at"],
+    }
+    st.caption(f"Feedback recorded: {rating}")
 
 
 def main() -> None:
@@ -522,6 +669,18 @@ def main() -> None:
     )
     max_per_source_default = max(0, int(rag_cfg.get("max_per_source", 0)))
     qa_pair_score_boost_default = float(rag_cfg.get("qa_pair_score_boost", 0.0))
+    hybrid_search_enabled_default = bool(rag_cfg.get("hybrid_search_enabled", False))
+    dense_vector_name_default = str(rag_cfg.get("dense_vector_name", "dense"))
+    sparse_vector_name_default = str(rag_cfg.get("sparse_vector_name", "sparse"))
+    sparse_max_terms_default = max(0, int(rag_cfg.get("sparse_max_terms", 512)))
+    sparse_min_token_chars_default = max(1, int(rag_cfg.get("sparse_min_token_chars", 2)))
+    hybrid_dense_weight_default = max(
+        0.0, float(rag_cfg.get("hybrid_dense_weight", 1.0))
+    )
+    hybrid_sparse_weight_default = max(
+        0.0, float(rag_cfg.get("hybrid_sparse_weight", 1.0))
+    )
+    hybrid_rrf_k_default = max(0, int(rag_cfg.get("hybrid_rrf_k", 0)))
 
     answer_sample_count_min = max(1, int(rag_cfg.get("answer_sample_count_min", 1)))
     answer_sample_count_max = max(
@@ -543,6 +702,24 @@ def main() -> None:
         1, int(rag_cfg.get("answer_rerank_support_top_k", 3))
     )
     prompt_mode = normalize_prompt_mode(str(rag_cfg.get("prompt_mode", "grounded")))
+    query_rewrite_cfg = QueryRewriteConfig(
+        enabled=bool(rag_cfg.get("query_rewrite_enabled", True)),
+        max_tokens=max(16, int(rag_cfg.get("query_rewrite_max_tokens", 96))),
+        temperature=max(0.0, float(rag_cfg.get("query_rewrite_temperature", 0.0))),
+    )
+    query_rewrite_max_history_turns = max(
+        0, int(rag_cfg.get("query_rewrite_max_history_turns", 3))
+    )
+    query_rewrite_max_history_chars = max(
+        0, int(rag_cfg.get("query_rewrite_max_history_chars", 1800))
+    )
+    query_rewrite_max_history_tokens = max(
+        0, int(rag_cfg.get("query_rewrite_max_history_tokens", 0))
+    )
+    feedback_cfg = AppFeedbackConfig(
+        enabled=bool(rag_cfg.get("feedback_enabled", True)),
+        path=str(rag_cfg.get("feedback_path", "data/feedback/rag_feedback.jsonl")),
+    )
 
     retrieval_modes = ["cross_encoder", "embedding_cosine", "none"]
     if rerank_mode_default not in retrieval_modes:
@@ -661,6 +838,74 @@ def main() -> None:
                         "Small score bonus added to synthetic QA records after reranking. "
                         "Useful when QA rows should compete more strongly with raw chunks."
                     ),
+                )
+            )
+            hybrid_search_enabled = st.checkbox(
+                "Hybrid dense+sparse search",
+                value=hybrid_search_enabled_default,
+                help=(
+                    "Fuse dense embedding results with sparse lexical matches before "
+                    "reranking. Requires rebuilding the Qdrant collection with hybrid "
+                    "search enabled."
+                ),
+            )
+            dense_vector_name = st.text_input(
+                "Dense vector name",
+                value=dense_vector_name_default,
+                disabled=not hybrid_search_enabled,
+            )
+            sparse_vector_name = st.text_input(
+                "Sparse vector name",
+                value=sparse_vector_name_default,
+                disabled=not hybrid_search_enabled,
+            )
+            sparse_max_terms = int(
+                st.number_input(
+                    "Sparse max terms",
+                    min_value=0,
+                    value=sparse_max_terms_default,
+                    step=32,
+                    disabled=not hybrid_search_enabled,
+                    help="Maximum lexical terms stored per sparse vector. 0 keeps all terms.",
+                )
+            )
+            sparse_min_token_chars = int(
+                st.number_input(
+                    "Sparse min token chars",
+                    min_value=1,
+                    value=sparse_min_token_chars_default,
+                    step=1,
+                    disabled=not hybrid_search_enabled,
+                )
+            )
+            hybrid_dense_weight = float(
+                st.number_input(
+                    "Hybrid dense weight",
+                    min_value=0.0,
+                    value=hybrid_dense_weight_default,
+                    step=0.1,
+                    format="%.2f",
+                    disabled=not hybrid_search_enabled,
+                )
+            )
+            hybrid_sparse_weight = float(
+                st.number_input(
+                    "Hybrid sparse weight",
+                    min_value=0.0,
+                    value=hybrid_sparse_weight_default,
+                    step=0.1,
+                    format="%.2f",
+                    disabled=not hybrid_search_enabled,
+                )
+            )
+            hybrid_rrf_k = int(
+                st.number_input(
+                    "Hybrid RRF k",
+                    min_value=0,
+                    value=hybrid_rrf_k_default,
+                    step=1,
+                    disabled=not hybrid_search_enabled,
+                    help="Set to 0 to use Qdrant's default RRF constant.",
                 )
             )
 
@@ -849,7 +1094,7 @@ def main() -> None:
             "Retrieval: "
             f"fetch_k={fetch_k}, mode={rerank_mode}, threshold={score_threshold:.2f}, "
             f"alpha={rerank_alpha:.2f}, max_per_source={max_per_source}, "
-            f"qa_boost={qa_pair_score_boost:.2f}"
+            f"qa_boost={qa_pair_score_boost:.2f}, hybrid={hybrid_search_enabled}"
         )
         st.caption(
             "Webex recency: "
@@ -874,6 +1119,12 @@ def main() -> None:
             f"context={max_total_context_tokens}, prompt={max_prompt_tokens}"
         )
         st.caption(f"Prompt mode: {prompt_mode}")
+        st.caption(
+            "Query rewrite: "
+            f"enabled={query_rewrite_cfg.enabled}, "
+            f"history_turns={query_rewrite_max_history_turns}"
+        )
+        st.caption(f"Feedback: enabled={feedback_cfg.enabled}, path={feedback_cfg.path}")
 
     retr_cfg = RetrievalConfig(
         qdrant_path=str(rag_cfg.get("qdrant_path", "data/rag/vectordb")),
@@ -899,6 +1150,14 @@ def main() -> None:
         webex_recency_recent_max_bonus=float(
             rag_cfg.get("webex_recency_recent_max_bonus", 0.1)
         ),
+        hybrid_search_enabled=hybrid_search_enabled,
+        dense_vector_name=dense_vector_name,
+        sparse_vector_name=sparse_vector_name,
+        sparse_max_terms=sparse_max_terms,
+        sparse_min_token_chars=sparse_min_token_chars,
+        hybrid_dense_weight=hybrid_dense_weight,
+        hybrid_sparse_weight=hybrid_sparse_weight,
+        hybrid_rrf_k=hybrid_rrf_k,
     )
     answer_sel_cfg = AnswerSelectionConfig(
         sample_count=answer_sample_count,
@@ -946,11 +1205,16 @@ def main() -> None:
             answer_time = _format_answer_time(message.get("answer_time_seconds"))
             if answer_time:
                 st.caption(f"Answered in {answer_time}")
+            retrieval_query = str(message.get("retrieval_query") or "")
+            if retrieval_query and retrieval_query != message.get("question"):
+                st.caption(f"Retrieved with: {retrieval_query}")
             sources = message.get("sources")
             if sources:
                 with st.expander("Sources"):
                     for idx, row in enumerate(sources, start=1):
-                        _render_source_row(row, idx)
+                        _render_source_row(row, idx, retrieval_query=retrieval_query)
+            if message.get("role") == "assistant":
+                _render_feedback_controls(message, feedback_cfg=feedback_cfg)
 
     image_upload_enabled = _supports_image_upload(provider)
     submission = st.chat_input(
@@ -974,8 +1238,10 @@ def main() -> None:
     if not question:
         return
 
+    prior_messages = list(st.session_state.messages)
     st.session_state.messages.append(
         {
+            "message_id": _new_message_id(),
             "role": "user",
             "content": question,
             "images": attached_images,
@@ -988,6 +1254,7 @@ def main() -> None:
     with st.chat_message("assistant"):
         with st.spinner("Retrieving context and generating answer..."):
             answer_started_at = perf_counter()
+            retrieval_query = question
             try:
                 image_description = _describe_images_for_retrieval(
                     generator=generator,
@@ -998,7 +1265,19 @@ def main() -> None:
                 if attached_images:
                     st.session_state.messages[-1]["image_description"] = image_description
 
-                retrieval_query = _retrieval_question(question, image_description)
+                rewrite_history = format_history(
+                    prior_messages,
+                    max_turns=query_rewrite_max_history_turns,
+                    max_chars=query_rewrite_max_history_chars,
+                    max_tokens=query_rewrite_max_history_tokens,
+                )
+                standalone_question = rewrite_retrieval_query(
+                    generator,
+                    question=question,
+                    history=rewrite_history,
+                    config=query_rewrite_cfg,
+                )
+                retrieval_query = _retrieval_question(standalone_question, image_description)
                 retrieved_rows = retriever.search(question=retrieval_query, top_k=top_k)
                 selected_rows = select_context_rows(
                     rows=retrieved_rows,
@@ -1055,6 +1334,8 @@ def main() -> None:
         answer_time = _format_answer_time(answer_time_seconds)
         if answer_time:
             st.caption(f"Answered in {answer_time}")
+        if retrieval_query and retrieval_query != question:
+            st.caption(f"Retrieved with: {retrieval_query}")
         if len(ranked_candidates) > 1:
             with st.expander("Answer Candidates"):
                 for idx, candidate in enumerate(ranked_candidates, start=1):
@@ -1067,16 +1348,19 @@ def main() -> None:
         if selected_rows:
             with st.expander("Sources"):
                 for idx, row in enumerate(selected_rows, start=1):
-                    _render_source_row(row, idx)
+                    _render_source_row(row, idx, retrieval_query=retrieval_query)
 
-    st.session_state.messages.append(
-        {
+        assistant_message = {
+            "message_id": _new_message_id(),
             "role": "assistant",
             "content": answer,
+            "question": question,
+            "retrieval_query": retrieval_query,
             "sources": selected_rows,
             "answer_time_seconds": answer_time_seconds,
         }
-    )
+        st.session_state.messages.append(assistant_message)
+        _render_feedback_controls(assistant_message, feedback_cfg=feedback_cfg)
 
 
 if __name__ == "__main__":

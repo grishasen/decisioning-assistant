@@ -1,36 +1,29 @@
-# Generation defaults.
+# Generation profile for Apple Silicon M5 Pro with 64 GB unified memory.
 #
-# Baseline values below are tuned for Apple MacBook Pro M3 24GB.
-# They are not hard limits: increase tokens/temperature/model size on larger hardware.
+# This profile favors answer quality while leaving headroom for the embedding
+# model, cross-encoder reranker, Streamlit, and a larger KV cache.
 #
-# Suggested starting values by model size:
-# 2B:
-#   qa_generator.max_tokens: 320
-#   answer_model.max_tokens: 600
-# 4B:
-#   qa_generator.max_tokens: 384
-#   answer_model.max_tokens: 900
-# 7B:
-#   qa_generator.max_tokens: 512
-#   answer_model.max_tokens: 1200
+# Alternate answer model for maximum quality/headroom testing:
+#   mlx-community/Qwen3-30B-A3B-Instruct-2507-8bit
+# The 8-bit variant is roughly 32 GB, so use it only if interactive latency and
+# memory pressure are acceptable on your machine.
 
 qa_generator:
-  provider: mlx
-  model: mlx-community/DeepHermes-3-Llama-3-8B-Preview-bf16
-  # M3 24GB baseline; raise for larger-memory systems or smaller quantized models.
-  max_tokens: 1024
-  temperature: 0.15
+  provider: mlx_vlm
+  model: mlx-community/gemma-4-31b-it-8bit
+  max_tokens: 2048
+  temperature: 0.10
   trust_remote_code: true
 
 answer_model:
-  provider: mlx
-  model: mlx-community/DeepHermes-3-Llama-3-8B-Preview-bf16
-  #adapter_path: data/models/DeepHermes-3-Llama-3-8B-Preview-bf16-lora-gs
-  # M3 24GB baseline; can be increased on larger-memory systems.
-  max_tokens: 1024
+  provider: mlx_vlm
+  model: mlx-community/gemma-4-31b-it-8bit
+  max_tokens: 2048
   temperature: 0.15
   trust_remote_code: true
 
 embeddings:
-  model_name: BAAI/bge-base-en-v1.5
+  # Keep this in sync with configs/rag.m5_pro_64gb.yaml.
+  model_name: BAAI/bge-large-en-v1.5
   normalize_embeddings: true
+

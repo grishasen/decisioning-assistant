@@ -5,7 +5,16 @@ from pathlib import Path
 from typing import Any
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import (
+    Datatype,
+    Distance,
+    Modifier,
+    PointStruct,
+    SparseIndexParams,
+    SparseVector,
+    SparseVectorParams,
+    VectorParams,
+)
 from tqdm import tqdm
 
 from common.io_utils import iter_jsonl, read_json, read_yaml
@@ -19,6 +28,17 @@ _DISTANCE_MAP = {
     "dot": Distance.DOT,
     "euclid": Distance.EUCLID,
     "manhattan": Distance.MANHATTAN,
+}
+
+_MODIFIER_MAP = {
+    "idf": Modifier.IDF,
+    "none": Modifier.NONE,
+}
+
+_DATATYPE_MAP = {
+    "float32": Datatype.FLOAT32,
+    "float16": Datatype.FLOAT16,
+    "uint8": Datatype.UINT8,
 }
 
 
@@ -108,6 +128,63 @@ def _build_vectors_config(spec: dict[str, Any]) -> Any:
     raise ValueError(f"Unsupported vectors config kind: {kind!r}")
 
 
+def _modifier_from_value(raw: Any) -> Modifier | None:
+    """Return a Qdrant sparse-vector modifier from export metadata."""
+    if raw is None or raw == "":
+        return None
+    text = str(raw).strip().lower()
+    mapped = _MODIFIER_MAP.get(text)
+    if mapped is not None:
+        return mapped
+    raise ValueError(f"Unsupported sparse modifier value in export metadata: {raw!r}")
+
+
+def _datatype_from_value(raw: Any) -> Datatype | None:
+    """Return a Qdrant datatype enum from export metadata."""
+    if raw is None or raw == "":
+        return None
+    text = str(raw).strip().lower()
+    mapped = _DATATYPE_MAP.get(text)
+    if mapped is not None:
+        return mapped
+    raise ValueError(f"Unsupported sparse datatype value in export metadata: {raw!r}")
+
+
+def _build_sparse_vectors_config(spec: Any) -> dict[str, SparseVectorParams] | None:
+    """Build Qdrant sparse vector config from export metadata."""
+    if not spec:
+        return None
+    if not isinstance(spec, dict):
+        raise ValueError("metadata.sparse_vectors_config must be a mapping when present")
+
+    sparse_vectors: dict[str, SparseVectorParams] = {}
+    for name, cfg in spec.items():
+        if not isinstance(cfg, dict):
+            raise ValueError(f"Invalid sparse vector params for '{name}'")
+        index_raw = cfg.get("index")
+        index = None
+        if isinstance(index_raw, dict):
+            index = SparseIndexParams(
+                full_scan_threshold=index_raw.get("full_scan_threshold"),
+                on_disk=index_raw.get("on_disk"),
+                datatype=_datatype_from_value(index_raw.get("datatype")),
+            )
+        sparse_vectors[str(name)] = SparseVectorParams(
+            index=index,
+            modifier=_modifier_from_value(cfg.get("modifier")),
+        )
+    return sparse_vectors
+
+
+def _build_point_vector(value: Any) -> Any:
+    """Convert exported vector JSON into Qdrant PointStruct-compatible vectors."""
+    if isinstance(value, dict) and "indices" in value and "values" in value:
+        return SparseVector(indices=value["indices"], values=value["values"])
+    if isinstance(value, dict):
+        return {str(name): _build_point_vector(vector) for name, vector in value.items()}
+    return value
+
+
 def main() -> None:
     """Signature: def main() -> None.
 
@@ -148,6 +225,9 @@ def main() -> None:
         raise ValueError("metadata.vectors_config must be a mapping")
 
     vectors_config = _build_vectors_config(vectors_spec)
+    sparse_vectors_config = _build_sparse_vectors_config(
+        metadata.get("sparse_vectors_config")
+    )
 
     client = QdrantClient(path=qdrant_path)
     if args.recreate and client.collection_exists(collection_name=collection_name):
@@ -158,6 +238,7 @@ def main() -> None:
         client.create_collection(
             collection_name=collection_name,
             vectors_config=vectors_config,
+            sparse_vectors_config=sparse_vectors_config,
         )
 
     points_buffer: list[PointStruct] = []
@@ -176,7 +257,7 @@ def main() -> None:
         points_buffer.append(
             PointStruct(
                 id=point_id,
-                vector=vector,
+                vector=_build_point_vector(vector),
                 payload=payload,
             )
         )

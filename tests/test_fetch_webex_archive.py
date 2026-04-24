@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from ingestion.fetch_webex_archive import (
     ALLOWED_CONFIG_KEYS,
+    DEFAULT_TOTAL_LIMIT,
     FILENAME_MAX_CHARS,
     _build_output_basename,
     _load_fetch_config,
@@ -10,14 +11,14 @@ from ingestion.fetch_webex_archive import (
 )
 
 
-def test_parse_max_total_messages_defaults_to_last_1000_messages() -> None:
-    """Signature: def test_parse_max_total_messages_defaults_to_last_1000_messages() -> None.
+def test_parse_max_total_messages_uses_default_total_limit() -> None:
+    """Signature: def test_parse_max_total_messages_uses_default_total_limit() -> None.
 
-    Verify that parse max total messages defaults to last 1000 messages.
+    Verify that parse max total messages uses the configured default limit.
     """
     policy = _parse_max_total_messages("")
 
-    assert policy.total_limit == 1000
+    assert policy.total_limit == DEFAULT_TOTAL_LIMIT
     assert policy.after is None
     assert policy.before is None
 

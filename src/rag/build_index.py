@@ -19,7 +19,14 @@ from pathlib import Path
 from typing import Any
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import (
+    Distance,
+    Modifier,
+    PointStruct,
+    SparseIndexParams,
+    SparseVectorParams,
+    VectorParams,
+)
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
@@ -27,6 +34,7 @@ from common.io_utils import iter_jsonl, read_yaml
 from common.logging_utils import get_logger
 from common.schemas import ChunkRecord, QARecord
 from common.text_utils import normalize_whitespace
+from rag.sparse import SparseTextConfig, sparse_vector_from_text
 
 logger = get_logger(__name__)
 
@@ -39,6 +47,18 @@ class ContextualizationConfig:
     contextualize_pdf_chunks: bool
     contextualize_webex_chunks: bool
     contextualize_qa_pairs: bool
+
+
+@dataclass(frozen=True)
+class HybridIndexConfig:
+    """Store dense+sparse hybrid index settings."""
+
+    enabled: bool
+    dense_vector_name: str
+    sparse_vector_name: str
+    sparse_modifier: str
+    sparse_max_terms: int
+    sparse_min_token_chars: int
 
 
 @dataclass(frozen=True)
@@ -435,6 +455,81 @@ def _build_qa_index_records(
     return rows
 
 
+def _sparse_modifier(value: str) -> Modifier | None:
+    """Return the configured Qdrant sparse-vector modifier."""
+    normalized = str(value or "").strip().lower()
+    if normalized in {"", "none", "off", "false"}:
+        return None
+    if normalized == "idf":
+        return Modifier.IDF
+    raise ValueError("sparse_modifier must be one of: idf, none")
+
+
+def _vectors_config(
+    *,
+    vector_size: int,
+    hybrid_cfg: HybridIndexConfig,
+) -> tuple[Any, dict[str, SparseVectorParams] | None]:
+    """Build Qdrant dense and sparse collection configs."""
+    dense_params = VectorParams(size=vector_size, distance=Distance.COSINE)
+    if not hybrid_cfg.enabled:
+        return dense_params, None
+
+    return (
+        {hybrid_cfg.dense_vector_name: dense_params},
+        {
+            hybrid_cfg.sparse_vector_name: SparseVectorParams(
+                index=SparseIndexParams(),
+                modifier=_sparse_modifier(hybrid_cfg.sparse_modifier),
+            )
+        },
+    )
+
+
+def _collection_matches_index_shape(
+    client: QdrantClient,
+    collection_name: str,
+    *,
+    vector_size: int,
+    hybrid_cfg: HybridIndexConfig,
+) -> bool:
+    """Return whether an existing collection can accept the configured point shape."""
+    info = client.get_collection(collection_name=collection_name)
+    params = info.config.params
+    vectors = params.vectors
+    sparse_vectors = params.sparse_vectors or {}
+
+    if hybrid_cfg.enabled:
+        if not isinstance(vectors, dict):
+            return False
+        dense_cfg = vectors.get(hybrid_cfg.dense_vector_name)
+        if dense_cfg is None or int(dense_cfg.size) != vector_size:
+            return False
+        return hybrid_cfg.sparse_vector_name in sparse_vectors
+
+    if isinstance(vectors, VectorParams):
+        return int(vectors.size) == vector_size
+    return False
+
+
+def _point_vector(
+    dense_vector: Any,
+    retrieval_text: str,
+    *,
+    hybrid_cfg: HybridIndexConfig,
+    sparse_cfg: SparseTextConfig,
+) -> Any:
+    """Build the Qdrant point vector payload for dense-only or hybrid collections."""
+    dense_values = dense_vector.tolist()
+    if not hybrid_cfg.enabled:
+        return dense_values
+
+    return {
+        hybrid_cfg.dense_vector_name: dense_values,
+        hybrid_cfg.sparse_vector_name: sparse_vector_from_text(retrieval_text, sparse_cfg),
+    }
+
+
 def main() -> None:
     """Signature: def main() -> None.
 
@@ -459,6 +554,18 @@ def main() -> None:
         contextualize_pdf_chunks=bool(cfg.get("contextualize_pdf_chunks", True)),
         contextualize_webex_chunks=bool(cfg.get("contextualize_webex_chunks", True)),
         contextualize_qa_pairs=bool(cfg.get("contextualize_qa_pairs", True)),
+    )
+    hybrid_cfg = HybridIndexConfig(
+        enabled=bool(cfg.get("hybrid_search_enabled", False)),
+        dense_vector_name=str(cfg.get("dense_vector_name", "dense")).strip() or "dense",
+        sparse_vector_name=str(cfg.get("sparse_vector_name", "sparse")).strip() or "sparse",
+        sparse_modifier=str(cfg.get("sparse_modifier", "idf")),
+        sparse_max_terms=max(0, int(cfg.get("sparse_max_terms", 512))),
+        sparse_min_token_chars=max(1, int(cfg.get("sparse_min_token_chars", 2))),
+    )
+    sparse_cfg = SparseTextConfig(
+        max_terms=hybrid_cfg.sparse_max_terms,
+        min_token_chars=hybrid_cfg.sparse_min_token_chars,
     )
     if batch_size <= 0:
         raise ValueError("index batch size must be > 0")
@@ -499,19 +606,36 @@ def main() -> None:
     vector_size = int(sample_vector.shape[0])
 
     client = QdrantClient(path=qdrant_path)
+    vectors_config, sparse_vectors_config = _vectors_config(
+        vector_size=vector_size,
+        hybrid_cfg=hybrid_cfg,
+    )
     if args.recreate:
         if client.collection_exists(collection_name=collection_name):
             client.delete_collection(collection_name=collection_name)
         client.create_collection(
             collection_name=collection_name,
-            vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+            vectors_config=vectors_config,
+            sparse_vectors_config=sparse_vectors_config,
         )
     else:
         collections = {c.name for c in client.get_collections().collections}
         if collection_name not in collections:
             client.create_collection(
                 collection_name=collection_name,
-                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+                vectors_config=vectors_config,
+                sparse_vectors_config=sparse_vectors_config,
+            )
+        elif not _collection_matches_index_shape(
+            client,
+            collection_name,
+            vector_size=vector_size,
+            hybrid_cfg=hybrid_cfg,
+        ):
+            raise RuntimeError(
+                f"Collection '{collection_name}' does not match the configured "
+                "dense/sparse vector shape. Rebuild with --recreate or use a "
+                "different collection_name/qdrant_path."
             )
 
     for start in tqdm(range(0, len(records), batch_size), desc="Indexing"):
@@ -524,7 +648,12 @@ def main() -> None:
             points.append(
                 PointStruct(
                     id=create_uuid_from_string(item.point_id),
-                    vector=vector.tolist(),
+                    vector=_point_vector(
+                        vector,
+                        item.text,
+                        hybrid_cfg=hybrid_cfg,
+                        sparse_cfg=sparse_cfg,
+                    ),
                     payload=item.payload,
                 )
             )
@@ -532,11 +661,13 @@ def main() -> None:
         client.upsert(collection_name=collection_name, points=points)
 
     logger.info(
-        "Indexed %s records into %s at %s (contextualize_index_text=%s)",
+        "Indexed %s records into %s at %s "
+        "(contextualize_index_text=%s, hybrid_search_enabled=%s)",
         len(records),
         collection_name,
         qdrant_path,
         contextualization_cfg.enabled,
+        hybrid_cfg.enabled,
     )
 
 

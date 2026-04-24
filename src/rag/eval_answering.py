@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from common.io_utils import read_yaml, write_json
@@ -21,6 +22,7 @@ from rag.eval_common import (
     load_eval_cases,
     phrase_hits,
 )
+from rag.feedback import source_summary
 from rag.prompt_budget import (
     build_rag_prompt,
     clip_text,
@@ -113,6 +115,7 @@ def main() -> None:
 
     for case in cases:
         question = str(case["question"])
+        started_at = perf_counter()
         rows = retriever.search(question, top_k)
         selected_rows = select_context_rows(
             rows=rows,
@@ -138,6 +141,7 @@ def main() -> None:
             normalize_embeddings=retriever.normalize_embeddings,
             cross_encoder=answer_cross_encoder,
         )
+        answer_time_seconds = perf_counter() - started_at
 
         expected_phrases = expected_answer_phrases(case)
         hits = phrase_hits(answer, expected_phrases)
@@ -162,6 +166,7 @@ def main() -> None:
             {
                 "query_id": case.get("query_id"),
                 "question": question,
+                "retrieval_query": question,
                 "answer": answer,
                 "abstained": abstained,
                 "answerable": answerable,
@@ -169,7 +174,11 @@ def main() -> None:
                 "expected_answer_contains": expected_phrases,
                 "phrase_hits": hits,
                 "selected_sources": [row.get("source_ref") for row in selected_rows],
+                "selected_source_details": [
+                    source_summary(row) for row in selected_rows
+                ],
                 "candidate_count": len(ranked_candidates),
+                "answer_time_seconds": answer_time_seconds,
             }
         )
 

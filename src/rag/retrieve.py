@@ -7,11 +7,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from qdrant_client import QdrantClient
+from qdrant_client.models import Prefetch, Rrf, RrfQuery, SparseVector
 from sentence_transformers import SentenceTransformer
 
 from common.io_utils import read_yaml
 from common.vector_utils import dot_score
 from common.webex_utils import parse_webex_datetime
+from rag.sparse import SparseTextConfig, sparse_vector_from_text
 
 
 def parse_args() -> argparse.Namespace:
@@ -449,6 +451,35 @@ def postprocess_retrieval_rows(
     return _apply_source_cap(scored, max_per_source=max_per_source, top_k=top_k)
 
 
+def _collection_vector_capabilities(
+    client: QdrantClient,
+    collection_name: str,
+    dense_vector_name: str,
+    sparse_vector_name: str,
+) -> tuple[str | None, bool]:
+    """Return the dense query vector name and whether hybrid search is available."""
+    try:
+        info = client.get_collection(collection_name=collection_name)
+    except Exception:
+        return None, False
+
+    vectors = info.config.params.vectors
+    sparse_vectors = info.config.params.sparse_vectors or {}
+
+    if not isinstance(vectors, dict):
+        return None, False
+
+    if dense_vector_name in vectors:
+        resolved_dense_name = dense_vector_name
+    elif len(vectors) == 1:
+        resolved_dense_name = next(iter(vectors))
+    else:
+        resolved_dense_name = dense_vector_name
+
+    supports_hybrid = resolved_dense_name in vectors and sparse_vector_name in sparse_vectors
+    return resolved_dense_name, supports_hybrid
+
+
 class LocalRetriever:
     """Run local Qdrant retrieval, reranking, and recency-aware scoring."""
     def __init__(
@@ -472,6 +503,14 @@ class LocalRetriever:
         webex_recency_query_adaptive: bool,
         webex_recency_recent_half_life_days: float,
         webex_recency_recent_max_bonus: float,
+        hybrid_search_enabled: bool = False,
+        dense_vector_name: str = "dense",
+        sparse_vector_name: str = "sparse",
+        sparse_max_terms: int = 512,
+        sparse_min_token_chars: int = 2,
+        hybrid_dense_weight: float = 1.0,
+        hybrid_sparse_weight: float = 1.0,
+        hybrid_rrf_k: int = 0,
     ) -> None:
         """Signature: def __init__(self, qdrant_path: str, collection_name: str, embedding_model: str, normalize_embeddings: bool, fetch_k: int, score_threshold: float, rerank_mode: str, reranker_model: str, rerank_alpha: float, max_per_source: int, qa_pair_score_boost: float, webex_recency_enabled: bool, webex_recency_field: str, webex_recency_half_life_days: float, webex_recency_max_bonus: float, webex_recency_apply_to_qa_pairs: bool, webex_recency_query_adaptive: bool, webex_recency_recent_half_life_days: float, webex_recency_recent_max_bonus: float) -> None.
 
@@ -481,6 +520,14 @@ class LocalRetriever:
         self._normalize_embeddings = normalize_embeddings
         self._embedder = SentenceTransformer(embedding_model)
         self._client = QdrantClient(path=qdrant_path)
+        requested_dense_vector_name = str(dense_vector_name or "dense").strip() or "dense"
+        self._sparse_vector_name = str(sparse_vector_name or "sparse").strip() or "sparse"
+        self._dense_vector_name, collection_supports_hybrid = _collection_vector_capabilities(
+            self._client,
+            collection_name,
+            requested_dense_vector_name,
+            self._sparse_vector_name,
+        )
 
         self._fetch_k = max(1, int(fetch_k))
         self._score_threshold = max(0.0, float(score_threshold))
@@ -497,6 +544,14 @@ class LocalRetriever:
         self._webex_recency_query_adaptive = bool(webex_recency_query_adaptive)
         self._webex_recency_recent_half_life_days = max(0.1, float(webex_recency_recent_half_life_days))
         self._webex_recency_recent_max_bonus = max(0.0, float(webex_recency_recent_max_bonus))
+        self._hybrid_search_enabled = bool(hybrid_search_enabled and collection_supports_hybrid)
+        self._sparse_text_config = SparseTextConfig(
+            max_terms=max(0, int(sparse_max_terms)),
+            min_token_chars=max(1, int(sparse_min_token_chars)),
+        )
+        self._hybrid_dense_weight = max(0.0, float(hybrid_dense_weight))
+        self._hybrid_sparse_weight = max(0.0, float(hybrid_sparse_weight))
+        self._hybrid_rrf_k = max(0, int(hybrid_rrf_k))
 
         self._cross_encoder: Any | None = None
         if self._rerank_mode == "cross_encoder":
@@ -544,6 +599,11 @@ class LocalRetriever:
         """
         return self._rerank_mode
 
+    @property
+    def hybrid_search_enabled(self) -> bool:
+        """Return whether dense+sparse hybrid first-stage retrieval is active."""
+        return self._hybrid_search_enabled
+
     def ensure_cross_encoder(self, reranker_model: str | None = None) -> Any | None:
         """Signature: def ensure_cross_encoder(self, reranker_model: str | None = None) -> Any | None.
 
@@ -561,6 +621,58 @@ class LocalRetriever:
             self._cross_encoder = loaded
         return loaded
 
+    def _dense_query_points(self, vector: list[float], fetch_k: int) -> Any:
+        """Run dense vector retrieval against single-vector or named-vector collections."""
+        return self._client.query_points(
+            collection_name=self._collection_name,
+            query=vector,
+            using=self._dense_vector_name,
+            limit=fetch_k,
+            with_payload=True,
+        )
+
+    def _hybrid_query_points(
+        self,
+        dense_vector: list[float],
+        sparse_vector: SparseVector,
+        fetch_k: int,
+    ) -> Any:
+        """Run dense+sparse RRF retrieval, falling back to dense retrieval if needed."""
+        if not self._hybrid_search_enabled or not sparse_vector.indices:
+            return self._dense_query_points(dense_vector, fetch_k)
+
+        weights: list[float] | None = None
+        if self._hybrid_dense_weight > 0.0 or self._hybrid_sparse_weight > 0.0:
+            weights = [self._hybrid_dense_weight, self._hybrid_sparse_weight]
+
+        try:
+            return self._client.query_points(
+                collection_name=self._collection_name,
+                prefetch=[
+                    Prefetch(
+                        query=dense_vector,
+                        using=self._dense_vector_name,
+                        limit=fetch_k,
+                    ),
+                    Prefetch(
+                        query=sparse_vector,
+                        using=self._sparse_vector_name,
+                        limit=fetch_k,
+                    ),
+                ],
+                query=RrfQuery(
+                    rrf=Rrf(
+                        k=self._hybrid_rrf_k or None,
+                        weights=weights,
+                    )
+                ),
+                limit=fetch_k,
+                with_payload=True,
+            )
+        except Exception:
+            self._hybrid_search_enabled = False
+            return self._dense_query_points(dense_vector, fetch_k)
+
     def search(self, question: str, top_k: int) -> list[dict[str, Any]]:
         """Signature: def search(self, question: str, top_k: int) -> list[dict[str, Any]].
 
@@ -573,13 +685,9 @@ class LocalRetriever:
             [question],
             normalize_embeddings=self._normalize_embeddings,
         )[0].tolist()
+        sparse_vector = sparse_vector_from_text(question, self._sparse_text_config)
 
-        resp = self._client.query_points(
-            collection_name=self._collection_name,
-            query=vector,
-            limit=fetch_k,
-            with_payload=True,
-        )
+        resp = self._hybrid_query_points(vector, sparse_vector, fetch_k)
 
         rows: list[dict[str, Any]] = []
         for point in resp.points:
@@ -669,6 +777,14 @@ def build_local_retriever(cfg: dict[str, Any]) -> LocalRetriever:
             cfg.get("webex_recency_recent_max_bonus", 0.1),
             0.1,
         ),
+        hybrid_search_enabled=bool(cfg.get("hybrid_search_enabled", False)),
+        dense_vector_name=str(cfg.get("dense_vector_name", "dense")),
+        sparse_vector_name=str(cfg.get("sparse_vector_name", "sparse")),
+        sparse_max_terms=int(cfg.get("sparse_max_terms", 512)),
+        sparse_min_token_chars=int(cfg.get("sparse_min_token_chars", 2)),
+        hybrid_dense_weight=_as_float(cfg.get("hybrid_dense_weight", 1.0), 1.0),
+        hybrid_sparse_weight=_as_float(cfg.get("hybrid_sparse_weight", 1.0), 1.0),
+        hybrid_rrf_k=int(cfg.get("hybrid_rrf_k", 0)),
     )
 
 
